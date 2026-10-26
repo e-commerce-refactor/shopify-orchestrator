@@ -21,7 +21,8 @@ def hash_file(filepath):
             sha256.update(chunk)
     return sha256.hexdigest()
 
-def run_audit(lead_id: str, workspace: str, brand_name: str, target_url: str):
+def _run_audit_legacy(lead_id: str, workspace: str, brand_name: str, target_url: str):
+    raise RuntimeError("Legacy synthetic audit generation has been disabled")
     audit_dir = os.path.join(workspace, "audit")
     discovery_dir = os.path.join(workspace, "discovery")
     os.makedirs(audit_dir, exist_ok=True)
@@ -246,3 +247,138 @@ graph LR
     }
 
     return handoff
+
+
+# Evidence-only implementation. Kept below the original generator so imports resolve
+# to this stricter version while existing historical reports remain readable.
+def run_audit(lead_id: str, workspace: str, brand_name: str, target_url: str):
+    audit_dir = os.path.join(workspace, "audit")
+    evidence_dir = os.path.join(workspace, "evidence")
+    os.makedirs(audit_dir, exist_ok=True)
+    network_path = os.path.join(evidence_dir, "network_evidence.json")
+    lead_path = os.path.join(workspace, "lead.json")
+    report_path = os.path.join(audit_dir, "audit_report.json")
+    summary_path = os.path.join(audit_dir, "audit_summary.md")
+
+    network = {}
+    lead = {}
+    if os.path.exists(network_path):
+        with open(network_path, "r", encoding="utf-8") as f:
+            network = json.load(f)
+    if os.path.exists(lead_path):
+        with open(lead_path, "r", encoding="utf-8") as f:
+            lead = json.load(f)
+
+    collection_method = network.get("method", "missing")
+    http_status = network.get("http_status")
+    live_evidence = collection_method == "live_http_get" and http_status == 200
+    detected_apps = network.get("detected_apps", [])
+    script_count = network.get("total_external_scripts")
+    measured = {
+        "http_status": http_status,
+        "external_script_count": script_count,
+        "detected_apps": detected_apps,
+        "server_header": network.get("server"),
+        "collection_method": collection_method,
+        "raw_html_sha256": network.get("raw_html_sha256"),
+    }
+
+    financial_inputs = lead.get("financial_inputs", {})
+    required_financial = {"monthly_revenue_mad", "monthly_saas_usd", "usd_mad_rate", "transaction_fee_rate"}
+    if required_financial.issubset(financial_inputs):
+        monthly_revenue = float(financial_inputs["monthly_revenue_mad"])
+        monthly_saas_usd = float(financial_inputs["monthly_saas_usd"])
+        usd_mad_rate = float(financial_inputs["usd_mad_rate"])
+        fee_rate = float(financial_inputs["transaction_fee_rate"])
+        annual_saas = monthly_saas_usd * usd_mad_rate * 12
+        annual_fees = monthly_revenue * fee_rate * 12
+        financial = {
+            "status": "calculated_from_user_inputs",
+            "inputs": financial_inputs,
+            "annual_saas_mad": round(annual_saas, 2),
+            "annual_transaction_fees_mad": round(annual_fees, 2),
+            "annual_total_mad": round(annual_saas + annual_fees, 2),
+        }
+    else:
+        financial = {
+            "status": "not_calculated",
+            "missing_inputs": sorted(required_financial - set(financial_inputs)),
+            "note": "No merchant financial figures were supplied; no cost or savings claim is made.",
+        }
+
+    findings = []
+    if script_count is not None:
+        findings.append(f"Observed {script_count} external script tags in the captured storefront HTML.")
+    if detected_apps:
+        findings.append("Detected script signatures: " + ", ".join(detected_apps) + ".")
+    if not findings:
+        findings.append("No technical finding could be substantiated from the captured evidence.")
+
+    report = {
+        "lead_id": lead_id,
+        "brand_name": brand_name,
+        "target_url": target_url,
+        "audited_at": utc_now_iso(),
+        "evidence_quality": "verified_live_capture" if live_evidence else "insufficient",
+        "measured_storefront_facts": measured,
+        "financial_analysis": financial,
+        "findings": findings,
+        "not_measured": [
+            "Lighthouse performance score",
+            "Core Web Vitals",
+            "JavaScript transfer size",
+            "conversion or abandonment rate",
+        ],
+    }
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+
+    financial_text = (
+        f"Calculated annual scenario: {financial['annual_total_mad']:,.2f} MAD from supplied merchant inputs."
+        if financial["status"] == "calculated_from_user_inputs"
+        else "Financial impact was not calculated because merchant-specific inputs were not supplied."
+    )
+    summary = f"""# Evidence-backed audit — {brand_name}
+
+**Store:** {target_url}
+**Captured:** {network.get('collected_at', 'unknown')}
+**Evidence quality:** {report['evidence_quality']}
+
+## Verified observations
+
+{os.linesep.join(f'- {item}' for item in findings)}
+
+## Financial analysis
+
+{financial_text}
+
+## Explicit limitations
+
+- Lighthouse and Core Web Vitals were not run and are not claimed.
+- Script tags do not by themselves prove performance impact.
+- App signatures indicate presence, not subscription tier or merchant cost.
+- Conversion, revenue, Shopify fees, and savings require merchant-supplied figures.
+"""
+    with open(summary_path, "w", encoding="utf-8") as f:
+        f.write(summary)
+
+    status = "passed" if live_evidence else "blocked"
+    blocker = [] if live_evidence else ["A successful live storefront capture is required for an evidence-backed audit"]
+    return {
+        "status": status,
+        "summary": f"Evidence-backed audit completed for {brand_name}." if live_evidence else f"Audit blocked for {brand_name}: live evidence is unavailable.",
+        "artifacts": [
+            {"path": f"leads/{lead_id}/audit/audit_report.json", "schema_version": "2.0", "sha256": hash_file(report_path)},
+            {"path": f"leads/{lead_id}/audit/audit_summary.md", "schema_version": "2.0", "sha256": hash_file(summary_path)},
+        ],
+        "evidence": [{"source": target_url, "collected_at": network.get("collected_at", utc_now_iso()), "method": collection_method, "confidence": "high" if live_evidence else "low"}],
+        "assumptions": [],
+        "risks": ["HTML-only inspection cannot establish runtime performance"],
+        "blockers": blocker,
+        "gate_results": [
+            {"criterion": "Live evidence available", "result": "pass" if live_evidence else "fail", "details": f"method={collection_method}, HTTP={http_status}"},
+            {"criterion": "No invented performance metrics", "result": "pass", "details": "Unmeasured values are explicitly null/not measured"},
+            {"criterion": "Financial claims require supplied inputs", "result": "pass", "details": financial["status"]},
+        ],
+        "recommended_next_action": f"Run Agent 3 (Solution Architect) for '{lead_id}'" if status == "passed" else f"Rerun discovery for '{lead_id}' with network access",
+    }

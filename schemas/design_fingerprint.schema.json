@@ -1,0 +1,165 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DesignFingerprint",
+  "description": "Executable design contract defining unique page composition, component variants, and motion profiles per lead.",
+  "type": "object",
+  "required": [
+    "lead_id",
+    "brand_name",
+    "page_family",
+    "layout_seed",
+    "density",
+    "navigation_style",
+    "hero_variant",
+    "section_order",
+    "catalog_variant",
+    "product_card_anatomy",
+    "trust_variant",
+    "conversion_pattern",
+    "image_treatment",
+    "typography_pairing",
+    "color_palette",
+    "motion_signature"
+  ],
+  "properties": {
+    "lead_id": { "type": "string" },
+    "brand_name": { "type": "string" },
+    "page_family": {
+      "type": "string",
+      "enum": [
+        "technical_commerce",
+        "luxury_editorial",
+        "luxury_horlogerie",
+        "fashion_lookbook",
+        "artisan_story",
+        "beauty_routine",
+        "clinical_trust"
+      ]
+    },
+    "layout_seed": { "type": "integer" },
+    "density": {
+      "type": "string",
+      "enum": [
+        "compact_high_info",
+        "spacious_cinematic",
+        "balanced_precision",
+        "brutalist_bold",
+        "organic_warm",
+        "clean_fluid",
+        "structured_medical"
+      ]
+    },
+    "navigation_style": {
+      "type": "string",
+      "enum": [
+        "dense_mega_menu",
+        "centered_minimal",
+        "split_brand_nav",
+        "sticky_compact_bar"
+      ]
+    },
+    "hero_variant": {
+      "type": "string",
+      "enum": [
+        "TechnicalDemoHero",
+        "EditorialCampaignHero",
+        "HorlogerieCockpitHero",
+        "CollectionCollageHero",
+        "FounderStoryHero",
+        "ClinicalAuthorityHero"
+      ]
+    },
+    "section_order": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 4
+    },
+    "catalog_variant": {
+      "type": "string",
+      "enum": [
+        "SpecificationGrid",
+        "EditorialLookbook",
+        "CollectionCarousel",
+        "RoutineBuilder",
+        "HandcraftedTiles",
+        "ComparisonMatrix"
+      ]
+    },
+    "product_card_anatomy": {
+      "type": "string",
+      "enum": [
+        "horizontal_spec_card",
+        "portrait_hover_reveal",
+        "compact_tile",
+        "editorial_framed_card",
+        "artisan_stamp_card"
+      ]
+    },
+    "trust_variant": {
+      "type": "string",
+      "enum": [
+        "technical_specs_strip",
+        "craftsmanship_seal",
+        "chronometer_telemetry",
+        "clinical_badges",
+        "wax_seal_badges",
+        "streetwear_pills",
+        "social_proof_marquee"
+      ]
+    },
+    "conversion_pattern": {
+      "type": "string",
+      "enum": [
+        "sticky_quick_order",
+        "concierge_drawer",
+        "fast_cod_modal",
+        "bottom_sheet_drawer",
+        "whatsapp_consultation_flow"
+      ]
+    },
+    "image_treatment": {
+      "type": "string",
+      "enum": [
+        "technical_sharp",
+        "warm_editorial",
+        "obsidian_sheen",
+        "high_contrast_grain",
+        "natural_sunlight",
+        "dewy_soft_focus",
+        "clinical_clean"
+      ]
+    },
+    "typography_pairing": {
+      "type": "object",
+      "required": ["headings", "body"],
+      "properties": {
+        "headings": { "type": "string" },
+        "body": { "type": "string" },
+        "mono": { "type": "string" }
+      }
+    },
+    "color_palette": {
+      "type": "object",
+      "required": ["background", "surface", "border", "text_primary", "text_secondary", "accent"],
+      "properties": {
+        "background": { "type": "string" },
+        "surface": { "type": "string" },
+        "border": { "type": "string" },
+        "text_primary": { "type": "string" },
+        "text_secondary": { "type": "string" },
+        "accent": { "type": "string" },
+        "accent_secondary": { "type": "string" }
+      }
+    },
+    "motion_signature": { "type": "string" },
+    "brand_signals": { "type": "object" },
+    "diversity_metrics": {
+      "type": "object",
+      "properties": {
+        "max_similarity_observed": { "type": "number" },
+        "most_similar_lead": { "type": ["string", "null"] },
+        "is_clone_safe": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -22,7 +22,8 @@ def hash_file(filepath):
             sha256.update(chunk)
     return sha256.hexdigest()
 
-def run_sales(lead_id: str, workspace: str, brand_name: str, target_url: str):
+def _run_sales_legacy(lead_id: str, workspace: str, brand_name: str, target_url: str):
+    raise RuntimeError("Legacy outreach with synthetic claims has been disabled")
     sales_dir = os.path.join(workspace, "sales")
     os.makedirs(sales_dir, exist_ok=True)
 
@@ -211,3 +212,98 @@ Merci bzzaf w tbarkellah 3likom !
     }
 
     return handoff
+
+
+def run_sales(lead_id: str, workspace: str, brand_name: str, target_url: str):
+    """Draft outreach using only claims present in the evidence-backed audit."""
+    sales_dir = os.path.join(workspace, "sales")
+    os.makedirs(sales_dir, exist_ok=True)
+    fr_path = os.path.join(sales_dir, "outreach_fr.md")
+    darija_path = os.path.join(sales_dir, "outreach_darija.md")
+
+    def load_json(path):
+        if not os.path.exists(path):
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    lead = load_json(os.path.join(workspace, "lead.json"))
+    audit = load_json(os.path.join(workspace, "audit", "audit_report.json"))
+    manifest = load_json(os.path.join(workspace, "deployment", "deployment_manifest.json"))
+    observations = audit.get("findings", [])
+    financial = audit.get("financial_analysis", {})
+    measured = audit.get("measured_storefront_facts", {})
+    contacts = lead.get("contacts", {})
+    recipient = contacts.get("email") or contacts.get("whatsapp") or "À compléter après vérification du contact"
+
+    smoke_verified = any(test.get("verified") for test in manifest.get("smoke_tests", []))
+    demo_url = manifest.get("vercel", {}).get("production_url") if smoke_verified else None
+    repo_url = manifest.get("github", {}).get("repository") if smoke_verified else None
+    observations_md = "\n".join(f"- {item}" for item in observations) or "- Aucun constat suffisamment étayé."
+    financial_md = ""
+    if financial.get("status") == "calculated_from_user_inputs":
+        financial_md = f"\n- Scénario financier calculé à partir des chiffres fournis : **{financial['annual_total_mad']:,.2f} MAD/an**."
+    demo_md = f"\n- Démo vérifiée : {demo_url}\n- Dépôt : {repo_url}" if demo_url and repo_url else "\n- Le lien de démonstration sera ajouté après vérification technique."
+
+    fr_content = f"""# Brouillon d'approche — {brand_name}
+
+**Destinataire :** {recipient}
+**Objet :** Observations techniques vérifiables sur {brand_name}
+
+Bonjour,
+
+Nous avons examiné les éléments publics de votre boutique {target_url}. Voici uniquement les observations que notre capture permet de vérifier :
+
+{observations_md}{financial_md}
+
+Nous n'avons pas mesuré Lighthouse, les Core Web Vitals, votre chiffre d'affaires ou votre taux de conversion ; ce brouillon ne formule donc aucune promesse sur ces points.
+
+Nous avons préparé une proposition de storefront moderne adaptée au paiement à la livraison.{demo_md}
+
+Si le sujet vous intéresse, seriez-vous disponible pour un échange court afin de valider vos contraintes réelles avant toute recommandation chiffrée ?
+
+Bien cordialement,
+
+[Votre nom / agence]
+
+*(Répondez « STOP » si vous ne souhaitez plus être contacté.)*
+"""
+    darija_content = f"""# Brouillon WhatsApp Darija — {brand_name}
+
+Salam, derna wahed l'analyse limitée ghir l-ma3loumat publiques dyal {target_url}.
+
+Li tqderna n-verifiw:
+{observations_md}
+
+Ma qissnach PageSpeed/Core Web Vitals, chiffre d'affaires, conversion, wala économies; donc ma kan3tiw ta wa3d chiffré bla données dyalkom.{demo_md}
+
+Ila l-mawdo3 kayhemmkom, n9dro ndiro appel qsir bach nefhmou les contraintes dyalkom qbel ay recommandation.
+
+Ila ma bghitouch messages okhrin, jawbou « STOP ».
+"""
+    with open(fr_path, "w", encoding="utf-8") as f:
+        f.write(fr_content)
+    with open(darija_path, "w", encoding="utf-8") as f:
+        f.write(darija_content)
+
+    evidence_quality = audit.get("evidence_quality")
+    status = "passed" if evidence_quality == "verified_live_capture" else "blocked"
+    blockers = [] if status == "passed" else ["Sales copy requires a verified live audit"]
+    return {
+        "status": status,
+        "summary": f"Drafted evidence-bounded French and Darija outreach for {brand_name}.",
+        "artifacts": [
+            {"path": f"leads/{lead_id}/sales/outreach_fr.md", "schema_version": "2.0", "sha256": hash_file(fr_path)},
+            {"path": f"leads/{lead_id}/sales/outreach_darija.md", "schema_version": "2.0", "sha256": hash_file(darija_path)},
+        ],
+        "evidence": [{"source": f"leads/{lead_id}/audit/audit_report.json", "collected_at": utc_now_iso(), "method": "bounded_claim_copywriting", "confidence": "high" if status == "passed" else "low"}],
+        "assumptions": [],
+        "risks": ["Draft must be reviewed by a human before outreach"],
+        "blockers": blockers,
+        "gate_results": [
+            {"criterion": "Claims trace to audit", "result": "pass" if status == "passed" else "fail", "details": f"audit evidence quality={evidence_quality}"},
+            {"criterion": "No synthetic performance or savings claims", "result": "pass", "details": f"script_count={measured.get('external_script_count')}"},
+            {"criterion": "Opt-out present", "result": "pass", "details": "STOP instruction included in both drafts"},
+        ],
+        "recommended_next_action": "Human review required before any outreach" if status == "passed" else "Acquire verified audit evidence before drafting outreach",
+    }

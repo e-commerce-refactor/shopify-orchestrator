@@ -13,6 +13,7 @@ import secrets
 import string
 import hashlib
 import subprocess
+import shutil
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -58,8 +59,11 @@ def slugify(lead_id: str) -> str:
 def run_cmd(cmd_list, cwd=None, shell=None):
     """Executes a subprocess command safely with UTF-8 decoding."""
     if shell is None:
-        shell = (os.name == "nt")
+        shell = False
     try:
+        resolved = shutil.which(cmd_list[0])
+        if os.name == "nt" and resolved and resolved.lower().endswith((".cmd", ".bat")):
+            cmd_list = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", resolved, *cmd_list[1:]]
         res = subprocess.run(
             cmd_list,
             cwd=cwd,
@@ -153,6 +157,12 @@ def run_deployment_prep(lead_id: str, workspace: str, brand_name: str, target_ur
             {"path": f"leads/{lead_id}/deployment/deployment_plan.json", "schema_version": "1.0", "sha256": plan_sha},
             {"path": f"leads/{lead_id}/deployment/deployment_manifest.json", "schema_version": "1.3", "sha256": man_sha}
         ],
+        "evidence": [
+            {"source": f"leads/{lead_id}/deployment/deployment_plan.json", "collected_at": utc_now_iso(), "method": "local_plan_generation", "confidence": "high"}
+        ],
+        "assumptions": [],
+        "risks": ["No external deployment has been verified during preparation"],
+        "blockers": [],
         "gate_results": [
             {"criterion": "Non-destructive plan generated", "result": "pass", "details": "Deployment plan and rollback strategy codified"}
         ],
@@ -174,12 +184,51 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
     deploy_dir = os.path.join(workspace, "deployment")
     manifest_path = os.path.join(deploy_dir, "deployment_manifest.json")
     os.makedirs(deploy_dir, exist_ok=True)
+    plan_path = os.path.join(deploy_dir, "deployment_plan.json")
+    if not os.path.exists(plan_path):
+        run_deployment_prep(lead_id, workspace, brand_name, target_url)
     
     slug = slugify(lead_id)
     github_org = os.environ.get("GITHUB_ORG", "e-commerce-refactor")
     supabase_token = os.environ.get("SUPABASE_ACCESS_TOKEN", "")
     supabase_org = os.environ.get("SUPABASE_ORG_ID", "")
     supabase_region = os.environ.get("SUPABASE_REGION", "eu-central-1")
+    errors = []
+    rls_migration_applied = False
+
+    def record_command(label, command, cwd=source_dir, allow_no_changes=False):
+        code, stdout, stderr = run_cmd(command, cwd=cwd)
+        combined = "\n".join(part for part in (stdout, stderr) if part)
+        if code != 0 and not (allow_no_changes and "nothing to commit" in combined.lower()):
+            errors.append(f"{label}: {combined or f'exit code {code}'}")
+        return code, stdout, stderr
+
+    def failure_handoff(stage):
+        failed_manifest = {
+            "manifest_version": "1.3.0",
+            "lead_id": lead_id,
+            "recorded_at": utc_now_iso(),
+            "failed_stage": stage,
+            "errors": list(errors),
+            "vercel": {"project_name": slug, "state": "FAILED"},
+            "compliance": {"live_production_deployment": False},
+        }
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(failed_manifest, f, indent=2, ensure_ascii=False)
+        return {
+            "status": "failed",
+            "summary": f"Deployment stopped during {stage} with {len(errors)} error(s).",
+            "artifacts": [
+                {"path": f"leads/{lead_id}/deployment/deployment_plan.json", "schema_version": "1.0", "sha256": hash_file(plan_path)},
+                {"path": f"leads/{lead_id}/deployment/deployment_manifest.json", "schema_version": "1.3", "sha256": hash_file(manifest_path)},
+            ],
+            "evidence": [{"source": target_url, "collected_at": utc_now_iso(), "method": "deployment_diagnostics", "confidence": "high"}],
+            "assumptions": [],
+            "risks": ["External resources created before the failure may require manual cleanup"],
+            "blockers": list(errors),
+            "gate_results": [{"criterion": stage, "result": "fail", "details": "; ".join(errors)}],
+            "recommended_next_action": "Review deployment errors and rerun after remediation",
+        }
 
     print(f"\n[DEPLOY AGENT] Initiating live automated deployment chain for '{lead_id}'...")
     print(f"               Target Slug: {slug}")
@@ -199,6 +248,7 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
         c_code, c_out, c_err = run_cmd(["gh", "repo", "create", f"{github_org}/{slug}", "--public"])
         if c_code != 0:
             print(f"[!] Notice creating repo: {c_err}")
+            errors.append(f"GitHub repository creation: {c_err or c_out or f'exit code {c_code}'}")
     else:
         print(f"[+] Remote repository '{github_org}/{slug}' exists.")
 
@@ -206,8 +256,8 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
     git_dir = os.path.join(source_dir, ".git")
     if not os.path.exists(git_dir):
         print("[*] Initializing local git repository...")
-        run_cmd(["git", "init"], cwd=source_dir)
-        run_cmd(["git", "branch", "-M", "main"], cwd=source_dir)
+        record_command("Git initialization", ["git", "init"])
+        record_command("Git main branch", ["git", "branch", "-M", "main"])
 
     # Ensure .gitignore
     gitignore_path = os.path.join(source_dir, ".gitignore")
@@ -217,15 +267,18 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
 
     # Set remote URL
     run_cmd(["git", "remote", "remove", "origin"], cwd=source_dir)
-    run_cmd(["git", "remote", "add", "origin", f"{gh_repo_url}.git"], cwd=source_dir)
+    record_command("Git remote configuration", ["git", "remote", "add", "origin", f"{gh_repo_url}.git"])
     
     # Initial Commit & Push
-    run_cmd(["git", "add", "."], cwd=source_dir)
-    run_cmd(["git", "commit", "-m", f"feat: initial modern Next.js storefront for {brand_name}"], cwd=source_dir)
+    record_command("Git staging", ["git", "add", "."])
+    record_command("Git initial commit", ["git", "commit", "-m", f"feat: initial modern Next.js storefront for {brand_name}"], allow_no_changes=True)
     print(f"[*] Pushing initial commit to '{gh_repo_url}' on branch 'main'...")
     p_code, p_out, p_err = run_cmd(["git", "push", "-u", "origin", "main", "--force"], cwd=source_dir)
     if p_code != 0:
         print(f"[!] Push note: {p_err}")
+        errors.append(f"GitHub initial push: {p_err or p_out or f'exit code {p_code}'}")
+    if errors:
+        return failure_handoff("GitHub setup")
 
     # =========================================================================
     # Step 2: Supabase Project Provisioning & Database Schema Migration
@@ -255,6 +308,7 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
                         break
         except Exception as e:
             print(f"[!] Error listing Supabase projects: {e}")
+            errors.append(f"Supabase project listing: {e}")
 
         # 2. Create project if not exists
         if not supabase_ref:
@@ -287,22 +341,28 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
                         supabase_ref = proj.get("id")
                         print(f"[+] Reusing active Supabase project in org: '{proj.get('name')}' (Ref: {supabase_ref})")
                         break
+                if not supabase_ref:
+                    errors.append(f"Supabase project creation: {e}")
 
         # 3. Wait for ACTIVE_HEALTHY if recently created
         if supabase_ref:
             supabase_url = f"https://{supabase_ref}.supabase.co"
             postgres_host = f"db.{supabase_ref}.supabase.co"
             print(f"[*] Ensuring Supabase status for {supabase_ref}...")
+            project_healthy = False
             for _ in range(25):
                 try:
                     s_req = urllib.request.Request(f"https://api.supabase.com/v1/projects/{supabase_ref}", headers=headers)
                     with urllib.request.urlopen(s_req, timeout=10) as s_resp:
                         st = json.loads(s_resp.read().decode()).get("status")
                         if st == "ACTIVE_HEALTHY":
+                            project_healthy = True
                             break
                 except Exception:
                     pass
                 time.sleep(3)
+            if not project_healthy:
+                errors.append(f"Supabase project {supabase_ref} did not reach ACTIVE_HEALTHY")
 
             # 4. Fetch API Keys
             try:
@@ -315,6 +375,9 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
                             break
             except Exception as e:
                 print(f"[!] Key fetch error: {e}")
+                errors.append(f"Supabase key fetch: {e}")
+            if not supabase_anon_key:
+                errors.append("Supabase anon key was not available")
 
             # 5. Apply SQL Schema Migration
             sql_migration = """
@@ -333,11 +396,11 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
             );
             ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
             DO $$ BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow public insert to orders') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'orders' AND policyname = 'Allow public insert to orders') THEN
                     CREATE POLICY "Allow public insert to orders" ON public.orders FOR INSERT TO anon WITH CHECK (true);
                 END IF;
-                IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow anon read orders') THEN
-                    CREATE POLICY "Allow anon read orders" ON public.orders FOR SELECT TO anon USING (true);
+                IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'orders' AND policyname = 'Allow anon read orders') THEN
+                    DROP POLICY "Allow anon read orders" ON public.orders;
                 END IF;
             END $$;
             CREATE INDEX IF NOT EXISTS idx_orders_phone ON public.orders (phone);
@@ -352,34 +415,48 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
                 )
                 with urllib.request.urlopen(q_req, timeout=15) as q_resp:
                     print(f"[+] Supabase SQL migration successfully applied on {supabase_ref}.")
+                    rls_migration_applied = True
             except Exception as e:
                 print(f"[!] Migration query notice: {e}")
+                errors.append(f"Supabase schema migration: {e}")
 
-    # Fallback to configured defaults if Supabase provision skipped
+    # Use an explicitly configured existing project if provisioning was skipped.
     if not supabase_url:
-        supabase_url = os.environ.get("SUPABASE_URL", "https://hqnsyfueflpfxynxockh.supabase.co")
+        supabase_url = os.environ.get("SUPABASE_URL", "")
         supabase_anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
-        postgres_host = os.environ.get("POSTGRES_HOST", "db.hqnsyfueflpfxynxockh.supabase.co")
+        postgres_host = os.environ.get("POSTGRES_HOST", "")
+        if not supabase_url or not supabase_anon_key:
+            errors.append("Supabase provisioning credentials or explicit SUPABASE_URL/SUPABASE_ANON_KEY are required")
+    if not rls_migration_applied:
+        errors.append("Supabase RLS migration was not verified; deployment cannot expose the orders endpoint safely")
+    if errors:
+        return failure_handoff("Supabase setup")
 
     # =========================================================================
     # Step 3: Inject Supabase Credentials into Codebase & Push
     # =========================================================================
     print(f"\n[STEP 3/5] Syncing Supabase connection into Next.js source code...")
-    supabase_ts = os.path.join(source_dir, "lib", "supabase.ts")
+    supabase_ts = os.path.join(source_dir, "lib", "supabaseClient.ts")
     if os.path.exists(supabase_ts):
         new_content = f"""import {{ createClient }} from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '{supabase_url}';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '{supabase_anon_key}';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = supabaseUrl && supabaseAnonKey
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null;
 """
         with open(supabase_ts, "w", encoding="utf-8") as f:
             f.write(new_content)
+    else:
+        errors.append("Generated Supabase client lib/supabaseClient.ts is missing")
 
-    run_cmd(["git", "add", "lib/supabase.ts"], cwd=source_dir)
-    run_cmd(["git", "commit", "-m", "feat(supabase): link Supabase database credentials"], cwd=source_dir)
-    run_cmd(["git", "push", "origin", "main"], cwd=source_dir)
+    record_command("Stage Supabase client", ["git", "add", "lib/supabaseClient.ts"])
+    record_command("Commit Supabase client", ["git", "commit", "-m", "fix(supabase): read connection from environment"], allow_no_changes=True)
+    record_command("Push Supabase client", ["git", "push", "origin", "main"])
+    if errors:
+        return failure_handoff("Supabase client publication")
 
     # =========================================================================
     # Step 4: Vercel Link, Git Connect & Production Deployment
@@ -396,14 +473,18 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
             pass
 
     # Ensure project exists in Vercel scope
-    run_cmd(["npx", "--yes", "vercel", "project", "add", slug, "--scope", "team_mUi2kkxuPAzkdPoA1CqpcfeE"], cwd=source_dir)
+    project_code, project_out, project_err = run_cmd(["npx", "--yes", "vercel", "project", "add", slug, "--scope", "team_mUi2kkxuPAzkdPoA1CqpcfeE"], cwd=source_dir)
+    if project_code != 0 and "already exists" not in (project_out + project_err).lower():
+        errors.append(f"Vercel project creation: {project_err or project_out or f'exit code {project_code}'}")
 
     # Link project
-    run_cmd(["npx", "--yes", "vercel", "link", "--yes", "--project", slug, "--scope", "team_mUi2kkxuPAzkdPoA1CqpcfeE"], cwd=source_dir)
+    record_command("Vercel project link", ["npx", "--yes", "vercel", "link", "--yes", "--project", slug, "--scope", "team_mUi2kkxuPAzkdPoA1CqpcfeE"])
     
     # Connect to GitHub
     print(f"[*] Connecting Vercel project to '{gh_repo_url}'...")
-    run_cmd(["npx", "--yes", "vercel", "git", "connect", f"{gh_repo_url}.git", "--yes"], cwd=source_dir)
+    record_command("Vercel Git connection", ["npx", "--yes", "vercel", "git", "connect", f"{gh_repo_url}.git", "--yes"])
+    if errors:
+        return failure_handoff("Vercel project setup")
 
     # Set Environment Variables on Vercel
     env_vars = {
@@ -417,16 +498,21 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
     }
     for k, v in env_vars.items():
         if v:
-            run_cmd([
+            record_command(f"Vercel environment variable {k}", [
                 "npx", "--yes", "vercel", "env", "add", k,
                 "--environment", "production,preview,development",
                 "--value", v,
                 "--yes", "--force"
-            ], cwd=source_dir)
+            ])
+    if errors:
+        return failure_handoff("Vercel environment configuration")
 
     # Deploy to Production
     print("[*] Building and deploying to Vercel production edge...")
     d_code, d_out, d_err = run_cmd(["npx", "--yes", "vercel", "--prod", "--yes"], cwd=source_dir)
+    if d_code != 0:
+        errors.append(f"Vercel production deployment: {d_err or d_out or f'exit code {d_code}'}")
+        return failure_handoff("Vercel production deployment")
     
     # Extract production URL from output or default
     prod_url = f"https://{slug}.vercel.app"
@@ -461,13 +547,17 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
     if live_status != 200:
         print(f"[!] Smoke test note: HTTP status {live_status}")
+        errors.append(f"Production smoke test returned HTTP {live_status or 'no response'}")
 
     # =========================================================================
     # Step 6: Update Deployment Manifest & Run State
     # =========================================================================
     # Get latest git commit SHA
-    _, commit_sha, _ = run_cmd(["git", "rev-parse", "--short", "HEAD"], cwd=source_dir)
-    commit_sha = commit_sha.strip() or "HEAD"
+    commit_code, commit_sha, commit_err = run_cmd(["git", "rev-parse", "--short", "HEAD"], cwd=source_dir)
+    if commit_code != 0:
+        errors.append(f"Git commit identification: {commit_err or f'exit code {commit_code}'}")
+    commit_sha = commit_sha.strip() or None
+    deployment_succeeded = not errors and live_status == 200
 
     final_manifest = {
         "manifest_version": "1.3.0",
@@ -483,50 +573,53 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
         "vercel": {
             "project_name": slug,
             "production_url": prod_url,
-            "state": "READY",
+            "state": "READY" if deployment_succeeded else "FAILED",
             "ci_trigger": "automatic_git_push"
         },
         "supabase": {
             "url": supabase_url,
-            "project_ref": supabase_ref or "hqnsyfueflpfxynxockh",
+            "project_ref": supabase_ref,
             "organization": supabase_org,
             "linked_env_vars": list(env_vars.keys())
         },
         "smoke_tests": [
             {
                 "route": prod_url,
-                "status": live_status or 200,
+                "status": live_status,
                 "verified": (live_status == 200)
             }
         ],
         "compliance": {
-            "least_privilege_enforced": True,
+            "least_privilege_enforced": rls_migration_applied,
             "human_authorization_granted": True,
-            "live_production_deployment": True
-        }
+            "live_production_deployment": deployment_succeeded
+        },
+        "errors": errors,
     }
 
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(final_manifest, f, indent=2, ensure_ascii=False)
     final_sha = hash_file(manifest_path)
 
+    status = "passed" if deployment_succeeded else "failed"
     handoff = {
-        "status": "passed",
-        "summary": f"Agent 6 successfully deployed {brand_name} to live production on Vercel Edge with GitHub CI/CD and Supabase database.",
+        "status": status,
+        "summary": f"Agent 6 deployed and verified {brand_name}." if deployment_succeeded else f"Deployment of {brand_name} failed verification with {len(errors)} error(s).",
         "artifacts": [
-            {"path": f"leads/{lead_id}/deployment/deployment_plan.json", "schema_version": "1.0"},
+            {"path": f"leads/{lead_id}/deployment/deployment_plan.json", "schema_version": "1.0", "sha256": hash_file(os.path.join(deploy_dir, "deployment_plan.json"))},
             {"path": f"leads/{lead_id}/deployment/deployment_manifest.json", "schema_version": "1.3", "sha256": final_sha}
         ],
         "evidence": [
-            {"source": prod_url, "status": live_status, "collected_at": utc_now_iso(), "method": "live_smoke_test"}
+            {"source": prod_url, "collected_at": utc_now_iso(), "method": "live_smoke_test", "confidence": "high" if live_status == 200 else "low"}
         ],
+        "assumptions": [],
+        "risks": ["External resources may require manual cleanup after a partial deployment"] if errors else [],
+        "blockers": errors,
         "gate_results": [
-            {"criterion": "GitHub Org Integration", "result": "pass", "details": f"Pushed to {gh_repo_url} (main)"},
-            {"criterion": "Supabase Orders Database", "result": "pass", "details": f"Connected to {supabase_url}"},
-            {"criterion": "Vercel Edge Deployment", "result": "pass", "details": f"Live at {prod_url}"},
-            {"criterion": "Smoke Test HTTP 200", "result": "pass", "details": f"Verified live HTTP {live_status}"}
+            {"criterion": "Deployment commands completed", "result": "pass" if not errors else "fail", "details": "All critical commands succeeded" if not errors else "; ".join(errors)},
+            {"criterion": "Smoke Test HTTP 200", "result": "pass" if live_status == 200 else "fail", "details": f"Observed HTTP {live_status or 'no response'}"}
         ],
-        "recommended_next_action": f"Run Agent 7 (Sales Writer) with live URL {prod_url}"
+        "recommended_next_action": f"Run Agent 7 (Sales Writer) with live URL {prod_url}" if deployment_succeeded else "Review deployment errors and rerun after remediation"
     }
 
     return handoff

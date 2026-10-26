@@ -34,7 +34,7 @@ def harvest_shopify_catalog(target_url: str, brand_name: str, archetype: str, ni
                     raw_price = first_var.get("price", "499")
                     price_mad = int(float(raw_price))
                     compare_price = first_var.get("compare_at_price")
-                    orig_mad = int(float(compare_price)) if compare_price else int(price_mad * 1.25)
+                    orig_mad = int(float(compare_price)) if compare_price else None
                     
                     images = p.get("images", [])
                     img_src = images[0].get("src") if images else "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80"
@@ -53,24 +53,21 @@ def harvest_shopify_catalog(target_url: str, brand_name: str, archetype: str, ni
                         "originalPriceMad": orig_mad,
                         "image": img_src,
                         "badge": "BESTSELLER" if idx == 0 else "LIVRAISON 24H",
-                        "description": clean_desc or f"Produit d'excellence sélectionné par {brand_name}. Finitions haut de gamme et conformité garantie.",
-                        "stockLeft": 3 + (idx % 4)
+                        "description": clean_desc or p.get("title", ""),
+                        "stockLeft": None
                     })
     except Exception:
         pass # Fall through to archetype-curated catalog
-
-    # If live catalog extraction was unavailable or yielded < 2 products, use archetype catalogs
-    if len(catalog_products) < 2:
-        catalog_products = get_archetype_catalog(archetype, brand_name)
 
     return {
         "count": len(catalog_products),
         "products": catalog_products,
         "categories": list(set(p.get("category", "Général") for p in catalog_products)),
-        "source": "live_shopify_api" if len(catalog_products) > 0 and "unsplash" not in catalog_products[0]["image"] else "archetype_curated"
+        "source": "live_shopify_api" if catalog_products else "unavailable"
     }
 
 def get_archetype_catalog(archetype: str, brand_name: str) -> list:
+    raise RuntimeError("Synthetic product catalogs have been disabled")
     """Provides authentic, category-specific curated inventory with real imagery and realistic Moroccan MAD prices."""
     if archetype == "tech_gadgets":
         return [

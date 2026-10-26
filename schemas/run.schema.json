@@ -59,6 +59,18 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "status", "recorded_at"],
+        "properties": {
+          "stage": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "running", "passed", "failed", "blocked", "skipped"] },
+          "recorded_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
     "next_action": { "type": "string" }
   }
 }

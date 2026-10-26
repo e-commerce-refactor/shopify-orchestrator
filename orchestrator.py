@@ -8,6 +8,9 @@ import os
 import json
 import re
 import hashlib
+import tempfile
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -61,6 +64,9 @@ def normalize_url(url: str) -> str:
 def sanitize_business_folder_name(name: str) -> str:
     clean = re.sub(r'[\\/*?:"<>|]', '', name).strip()
     clean = re.sub(r'[\s\-]+', '_', clean)
+    clean = clean.strip(". _")
+    if not clean or clean in {".", ".."}:
+        raise ValueError("Business name must contain at least one safe character")
     return clean
 
 def infer_business_name_from_url(url: str) -> str:
@@ -79,7 +85,145 @@ def generate_lead_id(url: str, custom_name: str = None) -> str:
     return sanitize_business_folder_name(inferred)
 
 def get_lead_workspace(lead_id: str) -> str:
-    return os.path.join(LEADS_DIR, lead_id)
+    if not isinstance(lead_id, str) or not lead_id.strip():
+        raise ValueError("lead_id must be a non-empty string")
+    if lead_id != os.path.basename(lead_id) or lead_id in {".", ".."}:
+        raise ValueError(f"Unsafe lead_id: {lead_id!r}")
+    workspace = os.path.abspath(os.path.join(LEADS_DIR, lead_id))
+    if os.path.commonpath([LEADS_DIR, workspace]) != os.path.abspath(LEADS_DIR):
+        raise ValueError(f"Lead workspace escapes leads directory: {lead_id!r}")
+    return workspace
+
+def atomic_write_json(path: str, data: dict):
+    """Write JSON durably and replace the destination atomically."""
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+@contextmanager
+def run_file_lock(workspace: str, timeout_seconds: float = 10.0):
+    """Cross-process lock for updates to a lead's run.json."""
+    lock_path = os.path.join(workspace, ".run.lock")
+    deadline = time.monotonic() + timeout_seconds
+    fd = None
+    while fd is None:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("ascii"))
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock_path) > 60:
+                    os.unlink(lock_path)
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Timed out waiting for run lock: {lock_path}")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        os.close(fd)
+        try:
+            os.unlink(lock_path)
+        except FileNotFoundError:
+            pass
+
+def _matches_schema_type(value, expected) -> bool:
+    type_map = {
+        "object": dict,
+        "array": list,
+        "string": str,
+        "integer": int,
+        "number": (int, float),
+        "boolean": bool,
+        "null": type(None),
+    }
+    expected_types = expected if isinstance(expected, list) else [expected]
+    return any(isinstance(value, type_map[t]) and not (t in {"integer", "number"} and isinstance(value, bool)) for t in expected_types)
+
+def validate_schema(instance, schema: dict, location: str = "$"):
+    """Dependency-free validator for the JSON Schema features used by this project."""
+    errors = []
+    expected_type = schema.get("type")
+    if expected_type and not _matches_schema_type(instance, expected_type):
+        return [f"{location}: expected {expected_type}, got {type(instance).__name__}"]
+    if "enum" in schema and instance not in schema["enum"]:
+        errors.append(f"{location}: {instance!r} is not in {schema['enum']}")
+    if isinstance(instance, dict):
+        for key in schema.get("required", []):
+            if key not in instance:
+                errors.append(f"{location}: missing required property {key!r}")
+        for key, value in instance.items():
+            if key in schema.get("properties", {}):
+                errors.extend(validate_schema(value, schema["properties"][key], f"{location}.{key}"))
+    elif isinstance(instance, list) and "items" in schema:
+        for index, value in enumerate(instance):
+            errors.extend(validate_schema(value, schema["items"], f"{location}[{index}]"))
+    if isinstance(instance, int) and not isinstance(instance, bool) and "minimum" in schema and instance < schema["minimum"]:
+        errors.append(f"{location}: value is below minimum {schema['minimum']}")
+    if isinstance(instance, str) and schema.get("format") == "uri":
+        parsed = urlparse(instance)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            errors.append(f"{location}: invalid HTTP(S) URI")
+    if isinstance(instance, str) and schema.get("format") == "date-time":
+        try:
+            datetime.fromisoformat(instance.replace("Z", "+00:00"))
+        except ValueError:
+            errors.append(f"{location}: invalid ISO date-time")
+    return errors
+
+def validate_against_schema(instance: dict, schema_name: str):
+    schema_path = os.path.join(SCHEMAS_DIR, schema_name)
+    with open(schema_path, "r", encoding="utf-8") as f:
+        schema = json.load(f)
+    errors = validate_schema(instance, schema)
+    if errors:
+        raise ValueError(f"{schema_name} validation failed: " + "; ".join(errors))
+
+STAGE_ORDER = ["intake", "discovery", "audit", "solution", "build", "qa", "deploy", "sales", "complete"]
+STAGE_PREREQUISITES = {
+    "discovery": "intake",
+    "audit": "discovery",
+    "solution": "audit",
+    "build": "solution",
+    "qa": "build",
+    "deploy": "qa",
+    "sales": "deploy",
+}
+
+def require_stage_ready(lead_id: str, requested_stage: str):
+    lead_data, run_data = load_lead_run(lead_id)
+    if not lead_data or not run_data:
+        raise FileNotFoundError(f"Lead {lead_id!r} has not completed intake")
+    prerequisite = STAGE_PREREQUISITES.get(requested_stage)
+    if not prerequisite:
+        return
+    current_stage = run_data.get("stage")
+    current_status = run_data.get("status")
+    current_index = STAGE_ORDER.index(current_stage) if current_stage in STAGE_ORDER else -1
+    prerequisite_index = STAGE_ORDER.index(prerequisite)
+    if current_index < prerequisite_index or (current_index == prerequisite_index and current_status != "passed"):
+        raise RuntimeError(
+            f"Cannot run {requested_stage}: prerequisite {prerequisite} has not passed "
+            f"(current stage={current_stage}, status={current_status})"
+        )
+
+def validate_handoff(handoff: dict):
+    validate_against_schema(handoff, "handoff.schema.json")
+    failed_gates = [g.get("criterion", "unnamed gate") for g in handoff["gate_results"] if g.get("result") == "fail"]
+    if handoff["status"] == "passed" and failed_gates:
+        raise ValueError(f"Passed handoff contains failed gates: {', '.join(failed_gates)}")
+    return handoff
 
 def init_workspace(lead_id: str, target_url: str, brand_name: str = "", category: str = "", city: str = "", contacts: dict = None, permissions: dict = None):
     workspace = get_lead_workspace(lead_id)
@@ -129,11 +273,10 @@ def init_workspace(lead_id: str, target_url: str, brand_name: str = "", category
         "next_action": "Run Agent 1 (Discovery) to collect public storefront dossier"
     }
     
-    with open(lead_file, "w", encoding="utf-8") as f:
-        json.dump(lead_data, f, indent=2, ensure_ascii=False)
-        
-    with open(run_file, "w", encoding="utf-8") as f:
-        json.dump(run_data, f, indent=2, ensure_ascii=False)
+    validate_against_schema(lead_data, "lead.schema.json")
+    validate_against_schema(run_data, "run.schema.json")
+    atomic_write_json(lead_file, lead_data)
+    atomic_write_json(run_file, run_data)
         
     return workspace, lead_data, run_data
 
@@ -142,18 +285,23 @@ def update_run(lead_id: str, updates: dict):
     run_file = os.path.join(workspace, "run.json")
     if not os.path.exists(run_file):
         raise FileNotFoundError(f"Run file not found for lead {lead_id}")
-    with open(run_file, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        
-    # Merge artifact_versions dictionary
-    if "artifact_versions" in updates and "artifact_versions" in data:
-        data["artifact_versions"].update(updates["artifact_versions"])
-        del updates["artifact_versions"]
-        
-    data.update(updates)
-    data["updated_at"] = utc_now_iso()
-    with open(run_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    updates = dict(updates)
+    with run_file_lock(workspace):
+        with open(run_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if "artifact_versions" in updates:
+            data.setdefault("artifact_versions", {}).update(updates.pop("artifact_versions"))
+        history = data.setdefault("history", [])
+        if any(key in updates for key in ("stage", "status")):
+            history.append({
+                "stage": updates.get("stage", data.get("stage")),
+                "status": updates.get("status", data.get("status")),
+                "recorded_at": utc_now_iso(),
+            })
+        data.update(updates)
+        data["updated_at"] = utc_now_iso()
+        validate_against_schema(data, "run.schema.json")
+        atomic_write_json(run_file, data)
     return data
 
 def load_lead_run(lead_id: str):
@@ -173,8 +321,11 @@ def resolve_lead_id(query: str) -> str:
     query = query.strip().strip('"').strip("'")
     
     # 1. Exact directory match
-    if os.path.isdir(get_lead_workspace(query)):
-        return query
+    try:
+        if os.path.isdir(get_lead_workspace(query)):
+            return query
+    except ValueError:
+        pass
 
     # 2. Match by numeric ID from Excel database (e.g., '1')
     try:
@@ -297,9 +448,10 @@ def step_intake(lead_id: str, target_url: str = None, brand_name: str = None):
     return lead_data, run_data
 
 def step_discovery(lead_id: str):
+    require_stage_ready(lead_id, "discovery")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
-    handoff = run_discovery(lead_id, workspace, lead_data["target_url"], lead_data["brand_name"])
+    handoff = validate_handoff(run_discovery(lead_id, workspace, lead_data["target_url"], lead_data["brand_name"]))
     
     art_versions = {a["path"]: a["sha256"] for a in handoff["artifacts"]}
     update_run(lead_id, {
@@ -336,10 +488,10 @@ def step_discovery(lead_id: str):
         status=handoff["status"],
         artifacts=handoff["artifacts"],
         findings=[
-            f"Public storefront fetched and verified with SHA256",
+            f"Storefront evidence method: {handoff['evidence'][0]['method']}",
             f"Classified into Design Archetype: '{arch_name}'",
-            f"Social Intelligence: {ig_h} ({fol_c} followers) & authentic trust claims extracted",
-            f"Catalog harvested ({dossier_info.get('catalog', {}).get('sample_count', 0)} items) with real images & MAD pricing"
+            f"Observed social profile data: {ig_h} ({fol_c} followers)",
+            f"Live catalog items harvested: {dossier_info.get('catalog', {}).get('sample_count', 0)}"
         ],
         assumptions=handoff["assumptions"],
         gates=handoff["gate_results"],
@@ -349,9 +501,10 @@ def step_discovery(lead_id: str):
     return handoff
 
 def step_audit(lead_id: str):
+    require_stage_ready(lead_id, "audit")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
-    handoff = run_audit(lead_id, workspace, lead_data["brand_name"], lead_data["target_url"])
+    handoff = validate_handoff(run_audit(lead_id, workspace, lead_data["brand_name"], lead_data["target_url"]))
     
     art_versions = {a["path"]: a["sha256"] for a in handoff["artifacts"]}
     update_run(lead_id, {
@@ -360,16 +513,23 @@ def step_audit(lead_id: str):
         "artifact_versions": art_versions,
         "next_action": handoff["recommended_next_action"]
     })
+    report_path = os.path.join(workspace, "audit", "audit_report.json")
+    audit_report = {}
+    if os.path.exists(report_path):
+        with open(report_path, "r", encoding="utf-8") as f:
+            audit_report = json.load(f)
+    measured = audit_report.get("measured_storefront_facts", {})
+    financial = audit_report.get("financial_analysis", {})
     
     print_completion_report(
         stage="audit",
         status=handoff["status"],
         artifacts=handoff["artifacts"],
         findings=[
-            "Mobile simulated PageSpeed score: 38/100 (Releasit & script bloat)",
-            "Financial drain: 21,600 DH/year in USD subscriptions consuming dotation e-commerce",
-            "Transaction fee drain: 36,000 DH/year in 2% penalties on Moroccan COD orders",
-            "Total annual drain to Shopify: ~57,600 DH / an"
+            f"Evidence quality: {audit_report.get('evidence_quality', 'unknown')}",
+            f"Observed external script tags: {measured.get('external_script_count', 'not measured')}",
+            f"Detected app signatures: {', '.join(measured.get('detected_apps', [])) or 'none'}",
+            f"Financial analysis: {financial.get('status', 'not calculated')}"
         ],
         assumptions=handoff["assumptions"],
         gates=handoff["gate_results"],
@@ -379,9 +539,10 @@ def step_audit(lead_id: str):
     return handoff
 
 def step_solution(lead_id: str):
+    require_stage_ready(lead_id, "solution")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
-    handoff = run_solution(lead_id, workspace, lead_data["brand_name"])
+    handoff = validate_handoff(run_solution(lead_id, workspace, lead_data["brand_name"]))
     
     art_versions = {a["path"]: a["sha256"] for a in handoff["artifacts"]}
     update_run(lead_id, {
@@ -400,19 +561,30 @@ def step_solution(lead_id: str):
         except Exception:
             pass
 
+    fp_file = os.path.join(workspace, "solution", "design_fingerprint.json")
+    fp_info = {}
+    if os.path.exists(fp_file):
+        try:
+            with open(fp_file, "r", encoding="utf-8") as f:
+                fp_info = json.load(f)
+        except Exception:
+            pass
+
     arch_title = layout_info.get("archetype_name", "E-Commerce")
     sig_effect = layout_info.get("motion_profile", {}).get("signature_effect", "smooth_glide")
     h_style = layout_info.get("layout_components", {}).get("hero_style", "bespoke")
+    div_sim = fp_info.get("diversity_metrics", {}).get("max_similarity_observed", 0.0)
 
     print_completion_report(
         stage="solution",
         status=handoff["status"],
         artifacts=handoff["artifacts"],
         findings=[
-            f"Archetype Blueprint: '{arch_title}' with '{h_style}' hero layout",
+            f"Design Genome Family: '{fp_info.get('page_family', arch_title)}' ({fp_info.get('density', 'standard')})",
+            f"Component Anatomy: Hero '{fp_info.get('hero_variant', h_style)}', Nav '{fp_info.get('navigation_style', 'standard')}', Card '{fp_info.get('product_card_anatomy', 'standard')}'",
+            f"Anti-Clone Diversity: Max similarity {div_sim:.1%} against {fp_info.get('diversity_metrics', {}).get('most_similar_lead') or 'none'} (Threshold < 65%)",
+            f"Page Assembly Sequence: {' ➔ '.join(fp_info.get('section_order', []))}",
             f"GPU Motion Profile: Signature effect '{sig_effect}' with zero JS bundle bloat",
-            "Functional requirements: 1-Click Fast COD Modal, WhatsApp handoff, zone shipping",
-            "Design tokens: Dynamic palette, custom Google Font pairing & border radius",
             "ADRs accepted: Next.js 14 App Router, Tailwind CSS, Vercel/Cloudflare Edge"
         ],
         assumptions=handoff["assumptions"],
@@ -423,9 +595,10 @@ def step_solution(lead_id: str):
     return handoff
 
 def step_build(lead_id: str):
+    require_stage_ready(lead_id, "build")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
-    handoff = run_build(lead_id, workspace, lead_data["brand_name"])
+    handoff = validate_handoff(run_build(lead_id, workspace, lead_data["brand_name"]))
     
     art_versions = {a["path"]: a["sha256"] for a in handoff["artifacts"]}
     update_run(lead_id, {
@@ -453,9 +626,10 @@ def step_build(lead_id: str):
     return handoff
 
 def step_qa(lead_id: str):
+    require_stage_ready(lead_id, "qa")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
-    handoff = run_qa(lead_id, workspace, lead_data["brand_name"])
+    handoff = validate_handoff(run_qa(lead_id, workspace, lead_data["brand_name"]))
     
     art_versions = {a["path"]: a["sha256"] for a in handoff["artifacts"]}
     update_run(lead_id, {
@@ -470,9 +644,9 @@ def step_qa(lead_id: str):
         status=handoff["status"],
         artifacts=handoff["artifacts"],
         findings=[
-            "All 6 adversarial QA checks passed with 0 critical or major defects",
-            "Projected Mobile PageSpeed: 98/100 (LCP 0.95s, FCP 0.45s)",
-            "Moroccan GSM phone validation confirmed on client-side form"
+            handoff["summary"],
+            "Production build and static checks were executed; no synthetic PageSpeed score is reported",
+            f"Blocking failures: {', '.join(handoff['blockers']) or 'none'}"
         ],
         assumptions=handoff["assumptions"],
         gates=handoff["gate_results"],
@@ -482,13 +656,14 @@ def step_qa(lead_id: str):
     return handoff
 
 def step_deploy_prep(lead_id: str, live: bool = True):
+    require_stage_ready(lead_id, "deploy")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
     
     if live:
-        handoff = run_live_deployment(lead_id, workspace, lead_data["brand_name"], lead_data["target_url"])
+        handoff = validate_handoff(run_live_deployment(lead_id, workspace, lead_data["brand_name"], lead_data["target_url"]))
     else:
-        handoff = run_deployment_prep(lead_id, workspace, lead_data["brand_name"], lead_data["target_url"])
+        handoff = validate_handoff(run_deployment_prep(lead_id, workspace, lead_data["brand_name"], lead_data["target_url"]))
     
     art_versions = {a["path"]: a.get("sha256", "auto") for a in handoff["artifacts"]}
     update_run(lead_id, {
@@ -503,30 +678,31 @@ def step_deploy_prep(lead_id: str, live: bool = True):
         status=handoff["status"],
         artifacts=handoff["artifacts"],
         findings=[
-            f"GitHub Repository: https://github.com/e-commerce-refactor/{slugify(lead_id)} (branch: main)",
-            "Supabase Database: connected with orders persistence schema & RLS policies",
-            "Vercel Edge Platform: deployed to live production with automated GitHub CI/CD",
-            "Zero-downtime DNS cutover checklist and instant rollback strategy codified"
+            handoff["summary"],
+            f"GitHub target: https://github.com/e-commerce-refactor/{slugify(lead_id)}",
+            "Anonymous order reads are denied by the applied database migration" if live and handoff["status"] == "passed" else "Deployment plan includes removal of anonymous order-read access",
+            f"Blocking failures: {', '.join(handoff.get('blockers', [])) or 'none'}"
         ],
         assumptions=handoff.get("assumptions", []),
         gates=handoff.get("gate_results", []),
-        external_changes=[
+        external_changes=([
             f"Pushed codebase to https://github.com/e-commerce-refactor/{slugify(lead_id)}",
             f"Deployed edge instance to Vercel"
-        ],
+        ] if live and handoff["status"] == "passed" else []),
         next_action=handoff["recommended_next_action"]
     )
     return handoff
 
 def step_sales(lead_id: str):
+    require_stage_ready(lead_id, "sales")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
-    handoff = run_sales(lead_id, workspace, lead_data["brand_name"], lead_data["target_url"])
+    handoff = validate_handoff(run_sales(lead_id, workspace, lead_data["brand_name"], lead_data["target_url"]))
     
     art_versions = {a["path"]: a["sha256"] for a in handoff["artifacts"]}
     update_run(lead_id, {
-        "stage": "complete",
-        "status": "passed",
+        "stage": "complete" if handoff["status"] == "passed" else "sales",
+        "status": handoff["status"],
         "artifact_versions": art_versions,
         "next_action": "Pipeline complete: Present demo & audit to user, awaiting human outreach authorization"
     })
@@ -536,10 +712,10 @@ def step_sales(lead_id: str):
         status=handoff["status"],
         artifacts=handoff["artifacts"],
         findings=[
-            f"Personalized executive French email drafted targeting founder of {lead_data['brand_name']}",
-            "High-impact Moroccan Darija WhatsApp pitch & 45-second audio voice note script generated",
-            "All outreach arguments strictly tied to verified audit figures (57,600 DH/year savings)",
-            "Live production demo and GitHub verification links embedded into pitches"
+            handoff["summary"],
+            "French and Darija drafts explicitly distinguish measured facts from unknowns",
+            "No PageSpeed, revenue, conversion, or savings claim is made without evidence",
+            "Both drafts include a STOP opt-out"
         ],
         assumptions=handoff["assumptions"],
         gates=handoff["gate_results"],
@@ -569,25 +745,19 @@ def run_all(lead_id: str, live: bool = True):
     step_intake(lead_id)
     
     # Agent 1: Discovery
-    step_discovery(lead_id)
-    
-    # Agent 2: Audit
-    step_audit(lead_id)
-    
-    # Agent 3: Solution Architect
-    step_solution(lead_id)
-    
-    # Agent 4: Storefront Builder
-    step_build(lead_id)
-    
-    # Agent 5: QA Verifier
-    step_qa(lead_id)
-    
-    # Agent 6: Deployment Manager (Automated Live Deployment)
-    step_deploy_prep(lead_id, live=live)
-    
-    # Agent 7: Sales Writer
-    step_sales(lead_id)
+    stages = [
+        ("discovery", step_discovery),
+        ("audit", step_audit),
+        ("solution", step_solution),
+        ("build", step_build),
+        ("qa", step_qa),
+        ("deploy", lambda lid: step_deploy_prep(lid, live=live)),
+        ("sales", step_sales),
+    ]
+    for stage_name, runner in stages:
+        handoff = runner(lead_id)
+        if handoff["status"] != "passed":
+            raise RuntimeError(f"Pipeline stopped at {stage_name}: {handoff['summary']}")
 
     # Auto-synchronize Excel Database
     try:

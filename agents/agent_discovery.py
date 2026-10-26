@@ -40,7 +40,7 @@ def run_discovery(lead_id: str, workspace: str, target_url: str, brand_name: str
     social_path = os.path.join(discovery_dir, "social_dossier.json")
 
     html_content = ""
-    status_code = 200
+    status_code = None
     headers_dict = {}
     collection_method = "live_http_get"
 
@@ -60,7 +60,7 @@ def run_discovery(lead_id: str, workspace: str, target_url: str, brand_name: str
             with open(raw_html_path, "r", encoding="utf-8") as f:
                 html_content = f.read()
         else:
-            html_content = f"<!-- Fallback evidence cache for {target_url} -->\n<html><head><title>{brand_name} - E-Commerce Maroc</title></head><body><h1>{brand_name}</h1></body></html>"
+            html_content = f"<!-- Live evidence unavailable for {target_url}: {type(e).__name__} -->"
 
     with open(raw_html_path, "w", encoding="utf-8") as f:
         f.write(html_content)
@@ -151,9 +151,9 @@ def run_discovery(lead_id: str, workspace: str, target_url: str, brand_name: str
     )
 
     # 7. Compile Brand Dossier
-    wa_num = contacts.get("whatsapp") or social_data.get("whatsapp_contact") or "+212 6 00 00 00 00"
-    wa_clean = re.sub(r'[^0-9]', '', wa_num)
-    contact_email = contacts.get("email") or f"contact@{lead_id.lower().replace('_', '-')}.ma"
+    wa_num = contacts.get("whatsapp") or social_data.get("whatsapp_contact")
+    wa_clean = re.sub(r'[^0-9]', '', wa_num) if wa_num else None
+    contact_email = contacts.get("email")
     contact_ig = contacts.get("instagram") or social_data.get("instagram_url")
 
     brand_dossier = {
@@ -193,7 +193,7 @@ def run_discovery(lead_id: str, workspace: str, target_url: str, brand_name: str
         },
         "verified_contacts": {
             "whatsapp": wa_num,
-            "whatsapp_link": f"https://wa.me/{wa_clean}",
+            "whatsapp_link": f"https://wa.me/{wa_clean}" if wa_clean else None,
             "email": contact_email,
             "instagram": contact_ig
         },
@@ -214,8 +214,11 @@ def run_discovery(lead_id: str, workspace: str, target_url: str, brand_name: str
         json.dump(brand_dossier, f, indent=2, ensure_ascii=False)
     dossier_sha256 = hash_file(dossier_path)
 
+    live_capture = collection_method == "live_http_get" and status_code == 200
+    social_collection = social_data.get("collection", {})
+    social_verified = social_collection.get("method") == "live_instagram_meta"
     handoff = {
-        "status": "passed",
+        "status": "passed" if live_capture else "blocked",
         "summary": f"Agent 1 (Discovery) collected storefront evidence, catalog, and social intelligence for {brand_name} (Archetype: {archetype_spec['name']}).",
         "artifacts": [
             {"path": f"leads/{lead_id}/evidence/storefront_raw.html", "schema_version": "1.0", "sha256": html_sha256},
@@ -224,7 +227,7 @@ def run_discovery(lead_id: str, workspace: str, target_url: str, brand_name: str
             {"path": f"leads/{lead_id}/discovery/social_dossier.json", "schema_version": "1.0", "sha256": social_sha256}
         ],
         "evidence": [
-            {"source": target_url, "collected_at": utc_now_iso(), "method": collection_method, "confidence": "high"}
+            {"source": target_url, "collected_at": utc_now_iso(), "method": collection_method, "confidence": "high" if live_capture else "low"}
         ],
         "assumptions": [
             f"Store operates in the {archetype_spec['name']} space with Cash on Delivery in Morocco"
@@ -232,13 +235,13 @@ def run_discovery(lead_id: str, workspace: str, target_url: str, brand_name: str
         "risks": [
             "Heavy reliance on Releasit COD form adds recurring USD SaaS bills and delays mobile PageSpeed"
         ],
-        "blockers": [],
+        "blockers": [] if live_capture else ["Live storefront evidence could not be collected"],
         "gate_results": [
-            {"criterion": "Evidence capture completeness", "result": "pass", "details": f"Raw HTML captured ({len(html_content)} bytes), status {status_code}"},
+            {"criterion": "Evidence capture completeness", "result": "pass" if live_capture else "fail", "details": f"Raw HTML captured ({len(html_content)} bytes), status {status_code}, method {collection_method}"},
             {"criterion": "Archetype & Identity extraction", "result": "pass", "details": f"Classified into '{archetype_id}' ({archetype_spec['name']})"},
-            {"criterion": "Social intelligence verified", "result": "pass", "details": f"IG {social_data['instagram_handle']} ({social_data['follower_count']} followers) and WhatsApp verified"}
+            {"criterion": "Social intelligence verified", "result": "pass" if social_verified else "not_applicable", "details": f"method={social_collection.get('method', 'not_collected')}, handle={social_data.get('instagram_handle')}"}
         ],
-        "recommended_next_action": f"Run Agent 2 (Store Audit Analyst) on lead '{lead_id}'"
+        "recommended_next_action": f"Run Agent 2 (Store Audit Analyst) on lead '{lead_id}'" if live_capture else f"Resolve storefront access and rerun discovery for '{lead_id}'"
     }
 
     return handoff

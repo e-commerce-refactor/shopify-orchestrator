@@ -8,7 +8,8 @@ import re
 import urllib.request
 import urllib.error
 
-def extract_social_intelligence(target_url: str, brand_name: str, contacts: dict, niche: str, archetype: str) -> dict:
+def _extract_social_intelligence_legacy(target_url: str, brand_name: str, contacts: dict, niche: str, archetype: str) -> dict:
+    raise RuntimeError("Legacy synthetic social intelligence has been disabled")
     """Harvests social intelligence from Instagram, Facebook, and storefront evidence."""
     ig_url = contacts.get("instagram", "")
     fb_url = contacts.get("facebook", "")
@@ -133,4 +134,50 @@ def extract_social_intelligence(target_url: str, brand_name: str, contacts: dict
             {"type": "image", "caption": "Testé et validé, je recommande à 100%.", "author": "@youssef_k"},
             {"type": "image", "caption": "Le service client sur WhatsApp est top.", "author": "@amina_m"}
         ]
+    }
+
+
+def extract_social_intelligence(target_url: str, brand_name: str, contacts: dict, niche: str, archetype: str) -> dict:
+    """Return only social facts observed from a supplied public profile URL."""
+    ig_url = contacts.get("instagram")
+    wa_num = contacts.get("whatsapp")
+    ig_handle = None
+    follower_count = None
+    bio = None
+    method = "not_collected"
+    confidence = "low"
+    error = None
+
+    if ig_url:
+        match = re.search(r"instagram\.com/([^/?#]+)", ig_url)
+        if match:
+            ig_handle = f"@{match.group(1).rstrip('/')}"
+        try:
+            req = urllib.request.Request(ig_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                content = resp.read().decode("utf-8", errors="ignore")
+            desc_match = re.search(r'<meta[^>]+(?:name|property)=["\'](?:description|og:description)["\'][^>]+content=["\']([^"\']+)', content, re.I)
+            if not desc_match:
+                desc_match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:name|property)=["\'](?:description|og:description)["\']', content, re.I)
+            if desc_match:
+                description = desc_match.group(1)
+                follower_match = re.search(r"([0-9,.]+[kKmM]?)\s+Followers", description)
+                follower_count = follower_match.group(1) if follower_match else None
+                bio = description
+                method = "live_instagram_meta"
+                confidence = "medium"
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+
+    return {
+        "instagram_handle": ig_handle,
+        "instagram_url": ig_url,
+        "follower_count": follower_count,
+        "verified_bio": bio,
+        "verified_claims": [],
+        "story_highlights": [],
+        "whatsapp_contact": wa_num,
+        "social_proof_headline": None,
+        "ugc_media": [],
+        "collection": {"method": method, "confidence": confidence, "error": error},
     }

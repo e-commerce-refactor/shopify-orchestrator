@@ -241,8 +241,8 @@ $$\text{Annual Shopify Drain} = 12 \times \left( \text{Plan}_{\text{USD}} + \tex
 
 - **Transient Network Errors:** Up to 3 retries with exponential backoff and jitter.
 - **Access Blocks & Captchas:** Stop immediately. Record the block in `run.json`, flag `status: blocked`, and log required human intervention. Never attempt unauthorized bypasses.
-- **Rollback Safety:** If a deployment failure occurs during `Agent 6`, execution halts immediately, diagnostics are captured, and the previous immutable deployment hash is restored.
-- **Data Integrity:** All writes to `lead.json` and `run.json` are atomic. In-flight artifacts are never left in a corrupted state.
+- **Deployment Failure Safety:** A critical external-command or smoke-test failure marks the deployment failed, records diagnostics, and prevents later pipeline stages from running. Resources created before the failure are listed as requiring manual cleanup; automatic cloud rollback is not claimed.
+- **Data Integrity:** Writes to `lead.json` and `run.json` use atomic replacement, and `run.json` updates use a per-lead process lock. Generated stage artifacts are checksummed after creation.
 
 ---
 
@@ -285,3 +285,44 @@ The workspace is pre-seeded with 35 active Shopify businesses in Morocco. Each h
 33. `leads/Binaa_Smart_Home/` (binaa.ma)
 34. `leads/Les_Cafés_Mirka/` (mirka.ma)
 35. `leads/Chabi_Chic/` (chabi-chic.com)
+
+---
+
+## 11. Design Genome & Anti-Clone Diversity Architecture
+
+To avoid generating cloned storefronts with identical component structures, the Orchestrator implements an executable **Design Genome** system (`agents/skills/design_genome.py`).
+
+### 11.1 The 7 Page Families & Compositions
+
+Rather than rendering an identical component tree (`Header → Stories → Hero → Trust → ProductGrid → UGC → Footer`), each merchant is classified into a distinct architectural page family with its own section sequence, density, and conversion flow:
+
+| Page Family | Target Store Archetypes | Density | Section Order Sequence | Signature Conversion Pattern |
+| :--- | :--- | :--- | :--- | :--- |
+| **`technical_commerce`** | Dashcams, automotive electronics, hardware (e.g. 70mai) | Compact, high information | `Nav → Hero → Specs Strip → Comparison Matrix → Catalog → Social Proof → Fast Checkout` | `sticky_quick_order` / In-line bundle checkout |
+| **`luxury_editorial`** | Haute Joaillerie, diamonds, fine gold (e.g. Anulus) | Spacious, cinematic | `Nav → Hero → Craftsmanship Seal → Stories → Catalog → Curated UGC → Appointment Drawer` | `concierge_drawer` / VIP Showroom Appointment |
+| **`luxury_horlogerie`** | Precision chronometers, automatic watches (e.g. Ma Montre) | Balanced precision | `Nav → Hero → Chronometer Telemetry → Catalog → Stories → UGC → Fast Checkout` | `fast_cod_modal` (Caliber warranty) |
+| **`fashion_lookbook`** | Streetwear, sneakers, apparel | Brutalist, bold | `Nav → Hero → Kinetic Ticker → Catalog → Stories → Social Proof → Bottom Sheet` | `bottom_sheet_drawer` |
+| **`artisan_story`** | Handcrafted leather, terroir, pottery (e.g. Bleather) | Organic, warm | `Nav → Hero → Founder Story → Catalog → Wax Seal Badges → Curated UGC → Fast Checkout` | `fast_cod_modal` (Artisan warranty) |
+| **`beauty_routine`** | Skincare, cosmetics, serums (e.g. Beauty Market) | Clean, fluid | `Nav → Hero → Botanical Pills → Routine Builder → Catalog → UGC → Fast Checkout` | `fast_cod_modal` (Multi-step bundle) |
+| **`clinical_trust`** | Health devices, orthopedics, dermocosmetics | Structured medical | `Nav → Hero → Clinical Badges → Comparison Matrix → Catalog → Social Proof → Quick Order` | `sticky_quick_order` |
+
+### 11.2 Component Variants (Structural Anatomy)
+
+Component files in `components/` are dynamically generated with structural variations:
+- **Navigation (`Header.tsx`):** `dense_mega_menu`, `centered_minimal`, `split_brand_nav`, `sticky_compact_bar`.
+- **Hero (`Hero.tsx`):** `TechnicalDemoHero`, `EditorialCampaignHero`, `HorlogerieCockpitHero`, `CollectionCollageHero`, `FounderStoryHero`, `ClinicalAuthorityHero`.
+- **Product Card (`ProductCard.tsx`):** `horizontal_spec_card`, `portrait_hover_reveal`, `compact_tile`, `editorial_framed_card`, `artisan_stamp_card`.
+- **Catalog Grid (`ProductGrid.tsx`):** `SpecificationGrid`, `EditorialLookbook`, `CollectionCarousel`, `RoutineBuilder`, `HandcraftedTiles`.
+- **Trust Badges (`TrustBadges.tsx`):** `technical_specs_strip`, `craftsmanship_seal`, `chronometer_telemetry`, `clinical_badges`, `wax_seal_badges`, `streetwear_pills`, `social_proof_marquee`.
+- **Conversion Flow (`CodModal.tsx`):** `concierge_drawer`, `sticky_quick_order`, `fast_cod_modal`, `bottom_sheet_drawer`.
+
+### 11.3 Executable `design_fingerprint.json` & Deterministic Variation
+
+Before code generation, Agent 3 produces `leads/<id>/solution/design_fingerprint.json` validated against `schemas/design_fingerprint.schema.json`. A deterministic seed derived from the `lead_id` hash guarantees that two brands in the exact same archetype (such as two jewelry stores) receive distinct color signatures, typography pairings, card anatomies, and hero layouts.
+
+### 11.4 The Anti-Clone Quality Gate (<65% Similarity)
+
+Agent 5 (QA) evaluates the proposed storefront against all other generated leads in the workspace. The composite similarity score calculates:
+$$\text{Similarity} = 0.15 \cdot S_{\text{family}} + 0.15 \cdot S_{\text{hero}} + 0.10 \cdot S_{\text{nav}} + 0.15 \cdot S_{\text{card}} + 0.10 \cdot S_{\text{checkout}} + 0.20 \cdot S_{\text{sections}} + 0.15 \cdot S_{\text{color}}$$
+
+If the similarity score exceeds **65%**, the Anti-Clone gate flags a defect, triggering deterministic variation pertubation until the design is proven distinct.
