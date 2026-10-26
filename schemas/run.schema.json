@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ShopifyModernizationRun",
+  "type": "object",
+  "required": [
+    "lead_id",
+    "target_url",
+    "stage",
+    "status",
+    "started_at",
+    "updated_at",
+    "attempt",
+    "artifact_versions",
+    "approvals",
+    "blockers",
+    "next_action"
+  ],
+  "properties": {
+    "lead_id": { "type": "string" },
+    "target_url": { "type": "string", "format": "uri" },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "intake",
+        "discovery",
+        "audit",
+        "solution",
+        "build",
+        "qa",
+        "approval",
+        "deploy",
+        "sales",
+        "complete",
+        "blocked"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "running", "passed", "failed", "blocked", "skipped"]
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "artifact_versions": { "type": "object" },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "approved_by", "approved_at"],
+        "properties": {
+          "stage": { "type": "string" },
+          "approved_by": { "type": "string" },
+          "approved_at": { "type": "string", "format": "date-time" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "next_action": { "type": "string" }
+  }
+}

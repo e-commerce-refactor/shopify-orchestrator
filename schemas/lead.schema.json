@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ShopifyModernizationLead",
+  "type": "object",
+  "required": ["lead_id", "target_url", "mode", "created_at", "market"],
+  "properties": {
+    "lead_id": { "type": "string" },
+    "brand_name": { "type": "string" },
+    "target_url": { "type": "string", "format": "uri" },
+    "mode": { "type": "string", "enum": ["assessment", "private_demo", "approved_production_migration"] },
+    "category": { "type": ["string", "null"] },
+    "market": { "type": "string", "default": "MA" },
+    "primary_language": { "type": "string", "enum": ["fr", "ar", "bilingual"], "default": "fr" },
+    "city": { "type": ["string", "null"] },
+    "contacts": {
+      "type": "object",
+      "properties": {
+        "whatsapp": { "type": ["string", "null"] },
+        "email": { "type": ["string", "null"] },
+        "instagram": { "type": ["string", "null"] },
+        "verified_owner": { "type": "boolean", "default": false }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "asset_use": { "type": "boolean", "default": false },
+        "data_collection": { "type": "boolean", "default": true },
+        "deployment": { "type": "boolean", "default": false },
+        "outreach": { "type": "boolean", "default": false }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}
