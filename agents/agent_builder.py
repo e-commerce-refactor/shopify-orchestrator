@@ -282,6 +282,13 @@ __ANIMATIONS__
         f.write(pc_cfg)
     created_files.append(pc_path)
 
+    # 5b. vercel.json
+    v_json = json.dumps({"framework": "nextjs"}, indent=2)
+    v_path = os.path.join(demo_dir, "vercel.json")
+    with open(v_path, "w", encoding="utf-8") as f:
+        f.write(v_json)
+    created_files.append(v_path)
+
     # 6. app/globals.css
     is_dark = page_family in ["technical_commerce", "luxury_horlogerie", "fashion_lookbook"]
     scrollbar_bg = "#070A10" if is_dark else "#F1F5F9"

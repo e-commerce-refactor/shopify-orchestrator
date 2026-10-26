@@ -199,7 +199,14 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
     def record_command(label, command, cwd=source_dir, allow_no_changes=False):
         code, stdout, stderr = run_cmd(command, cwd=cwd)
         combined = "\n".join(part for part in (stdout, stderr) if part)
-        if code != 0 and not (allow_no_changes and "nothing to commit" in combined.lower()):
+        lower_comb = combined.lower()
+        is_ignorable = (
+            (allow_no_changes and "nothing to commit" in lower_comb) or
+            "already connected" in lower_comb or
+            "already linked" in lower_comb or
+            ("already exists" in lower_comb and "repository" in lower_comb)
+        )
+        if code != 0 and not is_ignorable:
             errors.append(f"{label}: {combined or f'exit code {code}'}")
         return code, stdout, stderr
 
@@ -477,6 +484,41 @@ export const supabase = supabaseUrl && supabaseAnonKey
     if project_code != 0 and "already exists" not in (project_out + project_err).lower():
         errors.append(f"Vercel project creation: {project_err or project_out or f'exit code {project_code}'}")
 
+    # Ensure vercel.json is present in source directory so CLI recognizes Next.js
+    v_json_path = os.path.join(source_dir, "vercel.json")
+    with open(v_json_path, "w", encoding="utf-8") as f:
+        json.dump({"framework": "nextjs"}, f, indent=2)
+
+    # Ensure Vercel project framework is set to nextjs via API
+    v_token = os.environ.get("VERCEL_TOKEN")
+    if not v_token:
+        for ap in [
+            os.path.expanduser("~/.vercel/auth.json"),
+            os.path.expandvars(r"%APPDATA%\com.vercel.cli\Data\auth.json"),
+            os.path.expandvars(r"%LOCALAPPDATA%\com.vercel.cli\Data\auth.json"),
+        ]:
+            if os.path.exists(ap):
+                try:
+                    with open(ap, "r", encoding="utf-8") as af:
+                        v_token = json.load(af).get("token")
+                    if v_token:
+                        break
+                except Exception:
+                    pass
+
+    if v_token:
+        try:
+            p_req = urllib.request.Request(
+                f"https://api.vercel.com/v9/projects/{slug}?teamId=team_mUi2kkxuPAzkdPoA1CqpcfeE",
+                data=json.dumps({"framework": "nextjs"}).encode("utf-8"),
+                headers={"Authorization": f"Bearer {v_token}", "Content-Type": "application/json"},
+                method="PATCH"
+            )
+            with urllib.request.urlopen(p_req, timeout=10) as p_resp:
+                print(f"[+] Vercel project framework configured to 'nextjs'.")
+        except Exception as e:
+            print(f"[!] Notice configuring Vercel framework: {e}")
+
     # Link project
     record_command("Vercel project link", ["npx", "--yes", "vercel", "link", "--yes", "--project", slug, "--scope", "team_mUi2kkxuPAzkdPoA1CqpcfeE"])
     
@@ -498,12 +540,17 @@ export const supabase = supabaseUrl && supabaseAnonKey
     }
     for k, v in env_vars.items():
         if v:
-            record_command(f"Vercel environment variable {k}", [
+            env_cmd = [
                 "npx", "--yes", "vercel", "env", "add", k,
                 "--environment", "production,preview,development",
                 "--value", v,
                 "--yes", "--force"
-            ])
+            ]
+            if k.startswith("NEXT_PUBLIC_"):
+                env_cmd.extend(["--type", "config"])
+            else:
+                env_cmd.extend(["--type", "secret"])
+            record_command(f"Vercel environment variable {k}", env_cmd)
     if errors:
         return failure_handoff("Vercel environment configuration")
 
@@ -518,7 +565,7 @@ export const supabase = supabaseUrl && supabaseAnonKey
     prod_url = f"https://{slug}.vercel.app"
     for line in d_out.splitlines():
         if "https://" in line and ".vercel.app" in line:
-            clean_l = line.strip().split()[-1]
+            clean_l = line.strip().split()[-1].strip('"\' ,;()')
             if clean_l.startswith("https://"):
                 prod_url = clean_l
 
@@ -528,7 +575,7 @@ export const supabase = supabaseUrl && supabaseAnonKey
     print(f"\n[STEP 5/5] Performing live HTTP smoke test on '{prod_url}'...")
     time.sleep(5)
     live_status = 0
-    for attempt in range(5):
+    for attempt in range(6):
         try:
             req = urllib.request.Request(
                 prod_url,
@@ -543,7 +590,7 @@ export const supabase = supabaseUrl && supabaseAnonKey
             live_status = e.code
         except Exception:
             pass
-        time.sleep(3)
+        time.sleep(5)
 
     if live_status != 200:
         print(f"[!] Smoke test note: HTTP status {live_status}")
