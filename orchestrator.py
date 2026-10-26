@@ -553,8 +553,9 @@ def slugify(lead_id: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     slug = slug.strip("-")
-    if not slug.endswith("-demo"):
-        slug = f"{slug}-demo"
+    suffix = os.environ.get("DEPLOY_SLUG_SUFFIX", "-v2")
+    if not slug.endswith(suffix):
+        slug = f"{slug}{suffix}"
     return slug
 
 def run_all(lead_id: str, live: bool = True):

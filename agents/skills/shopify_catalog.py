@@ -219,7 +219,34 @@ def get_archetype_catalog(archetype: str, brand_name: str) -> list:
                 "stockLeft": 3
             }
         ]
-    else: # luxury_prestige
+    elif archetype == "luxury_horlogerie":
+        return [
+            {
+                "id": "rolex-datejust-41-wimbledon",
+                "name": f"{brand_name} Datejust 41 Wimbledon Two-Tone",
+                "subtitle": "Cadran Ardoise Chiffres Romains Verts & Lunette Cannelée Or 18K",
+                "category": "Datejust & Classic",
+                "priceMad": 1599,
+                "originalPriceMad": 1999,
+                "badge": "BESTSELLER CASABLANCA",
+                "image": "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=800&q=80",
+                "description": "Le garde-temps le plus convoité au Maroc. Boîtier acier Oystersteel 904L poli, chiffres romains surlignés de vert impérial et loupe cyclope saphir inrayable.",
+                "stockLeft": 3
+            },
+            {
+                "id": "rolex-gmt-master-ii-noir",
+                "name": f"{brand_name} GMT‑Master II Céramique Noire",
+                "subtitle": "Lunette Tournante Cerachrom Bidirectionnelle & Calibre Automatique",
+                "category": "GMT & Sport",
+                "priceMad": 1599,
+                "originalPriceMad": 1950,
+                "badge": "LIVRAISON 24H",
+                "image": "https://images.unsplash.com/photo-1524805444758-089113d48a6d?auto=format&fit=crop&w=800&q=80",
+                "description": "Conçue pour les grands voyageurs. Boîtier robuste en acier 904L, aiguille GMT verte indépendante et réserve de marche automatique certifiée.",
+                "stockLeft": 2
+            }
+        ]
+    else: # luxury_joaillerie / luxury_prestige
         return [
             {
                 "id": "solitaire-or-18k-diamant",

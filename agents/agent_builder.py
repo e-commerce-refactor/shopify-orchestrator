@@ -458,6 +458,14 @@ export default function InstagramStories() {
         hero_headline = "La Haute Définition. La Sécurité Absolue sur la Route."
         hero_tag = "⚡ SYSTÈMES CONNECTÉS 4K • GARANTIE 1 AN OFFICIELLE"
         hero_desc = f"Découvrez les équipements de pointe <strong>{brand_name}</strong> au Maroc. Vision nocturne Sony Starvis 2, détection choc stationnement 24/7 et installation certifiée à Casablanca et Rabat."
+    elif archetype_id == "luxury_horlogerie":
+        hero_headline = "L'Art de l'Horlogerie. La Puissance au Poignet."
+        hero_tag = "⏱ HAUTE HORLOGERIE & CHRONOMÈTRES • ÉDITION 2026"
+        hero_desc = f"Découvrez la quintessence des garde-temps d'exception avec <strong>{brand_name}</strong>. Boîtiers forgés en acier 904L, lunette Cerachrom, loupe cyclope saphir et mouvement mécanique certifié."
+    elif archetype_id == "luxury_joaillerie":
+        hero_headline = "L'Élégance de l'Or. L'Éclat Éternel."
+        hero_tag = "💎 CRÉATIONS JOAILLIÈRES & OR 18K • CASABLANCA"
+        hero_desc = f"Découvrez les joyaux d'exception de la maison <strong>{brand_name}</strong>. Bagues de fiançailles, solitaires or 18 carats et parures certifiées, livrées dans un écrin de prestige scellé."
     elif archetype_id == "fashion_streetwear":
         hero_headline = "L'Audace du Style. Le Confort Sans Compromis."
         hero_tag = "👟 NOUVELLE COLLECTION 2026 • ESSAYAGE À DOMICILE"

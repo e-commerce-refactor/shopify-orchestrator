@@ -9,7 +9,7 @@ MOTION_PROFILES = {
     "tech_gadgets": {
         "archetype": "tech_gadgets",
         "signature_effect": "laser_scan_and_radar_pulse",
-        "timing_curve": "cubic-bezier(0.16, 1, 0.3, 1)", # Cyber Snap
+        "timing_curve": "cubic-bezier(0.16, 1, 0.3, 1)",
         "hero_entrance": "slide_down_fade",
         "card_hover": "glow_cyan_and_scale",
         "checkout_transition": "instant_slide_in",
@@ -38,7 +38,7 @@ MOTION_PROFILES = {
     "fashion_streetwear": {
         "archetype": "fashion_streetwear",
         "signature_effect": "infinite_marquee_and_brutalist_pop",
-        "timing_curve": "cubic-bezier(0.2, 0, 0, 1)", # Brutalist Snappy
+        "timing_curve": "cubic-bezier(0.2, 0, 0, 1)",
         "hero_entrance": "staggered_fade_up",
         "card_hover": "offset_hard_shadow_shift",
         "checkout_transition": "bottom_drawer_spring",
@@ -62,7 +62,7 @@ MOTION_PROFILES = {
     "artisanal_craft": {
         "archetype": "artisanal_craft",
         "signature_effect": "artisanal_stamp_and_warm_bloom",
-        "timing_curve": "cubic-bezier(0.34, 1.56, 0.64, 1)", # Tactile Stamp
+        "timing_curve": "cubic-bezier(0.34, 1.56, 0.64, 1)",
         "hero_entrance": "slow_organic_reveal",
         "card_hover": "warm_terracotta_lift",
         "checkout_transition": "gentle_modal_scale",
@@ -85,7 +85,7 @@ MOTION_PROFILES = {
     "beauty_cosmetics": {
         "archetype": "beauty_cosmetics",
         "signature_effect": "dewy_ripple_and_rose_sheen",
-        "timing_curve": "cubic-bezier(0.25, 1, 0.5, 1)", # Soft Dew
+        "timing_curve": "cubic-bezier(0.25, 1, 0.5, 1)",
         "hero_entrance": "soft_gradient_float",
         "card_hover": "dewy_glow_lift",
         "checkout_transition": "smooth_pill_unfold",
@@ -107,7 +107,7 @@ MOTION_PROFILES = {
     "health_medical": {
         "archetype": "health_medical",
         "signature_effect": "clinical_heartbeat_and_shield_pop",
-        "timing_curve": "cubic-bezier(0.4, 0, 0.2, 1)", # Calm Reassurance
+        "timing_curve": "cubic-bezier(0.4, 0, 0.2, 1)",
         "hero_entrance": "clean_fade_down",
         "card_hover": "crisp_border_glow",
         "checkout_transition": "direct_fade_scale",
@@ -124,15 +124,37 @@ MOTION_PROFILES = {
         'heartbeat': 'heartbeat_pulse 3s ease-in-out infinite',
         """
     },
-    "luxury_prestige": {
-        "archetype": "luxury_prestige",
-        "signature_effect": "horlogerie_gear_sweep_and_gold_shimmer",
-        "timing_curve": "cubic-bezier(0.25, 1, 0.5, 1)", # Swiss Prestige
-        "hero_entrance": "slow_curtain_reveal",
-        "card_hover": "gold_3d_tilt",
+    "luxury_joaillerie": {
+        "archetype": "luxury_joaillerie",
+        "signature_effect": "diamond_sparkle_and_velvet_float",
+        "timing_curve": "cubic-bezier(0.25, 1, 0.5, 1)",
+        "hero_entrance": "gentle_radiance_fade",
+        "card_hover": "velvet_gold_lift",
         "checkout_transition": "velvet_fade_up",
         "tailwind_keyframes": """
-        gold_shimmer: {
+        sparkle: {
+          '0%, 100%': { opacity: '0.3', transform: 'scale(0.8) rotate(0deg)' },
+          '50%': { opacity: '1', transform: 'scale(1.2) rotate(90deg)' },
+        },
+        gold_sheen: {
+          '0%': { backgroundPosition: '-100% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        }
+        """,
+        "tailwind_animations": """
+        'diamond-sparkle': 'sparkle 2.5s ease-in-out infinite',
+        'gold-sheen': 'gold_sheen 4s linear infinite',
+        """
+    },
+    "luxury_horlogerie": {
+        "archetype": "luxury_horlogerie",
+        "signature_effect": "tourbillon_sweep_and_sapphire_sheen",
+        "timing_curve": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "hero_entrance": "slow_curtain_reveal",
+        "card_hover": "emerald_3d_tilt",
+        "checkout_transition": "instant_slide_in",
+        "tailwind_keyframes": """
+        sapphire_sheen: {
           '0%': { transform: 'translateX(-100%) rotate(45deg)' },
           '100%': { transform: 'translateX(200%) rotate(45deg)' },
         },
@@ -142,8 +164,8 @@ MOTION_PROFILES = {
         }
         """,
         "tailwind_animations": """
-        'gold-shimmer': 'gold_shimmer 4s ease-in-out infinite',
-        'tourbillon-slow': 'tourbillon 20s linear infinite',
+        'sapphire-sheen': 'sapphire_sheen 3.5s ease-in-out infinite',
+        'tourbillon-slow': 'tourbillon 18s linear infinite',
         """
     }
 }

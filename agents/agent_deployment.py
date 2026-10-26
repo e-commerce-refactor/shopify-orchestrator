@@ -50,8 +50,9 @@ def slugify(lead_id: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     slug = slug.strip("-")
-    if not slug.endswith("-demo"):
-        slug = f"{slug}-demo"
+    suffix = os.environ.get("DEPLOY_SLUG_SUFFIX", "-v2")
+    if not slug.endswith(suffix):
+        slug = f"{slug}{suffix}"
     return slug
 
 def run_cmd(cmd_list, cwd=None, shell=None):
@@ -385,17 +386,17 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
     # =========================================================================
     print(f"\n[STEP 4/5] Deploying on Vercel Serverless Edge Platform...")
     
-    # Ensure local .vercel/project.json is configured for seamless deployment
+    # Ensure local .vercel is clean and project is linked to the new slug
     vercel_dir = os.path.join(source_dir, ".vercel")
-    os.makedirs(vercel_dir, exist_ok=True)
-    v_proj_id = "prj_WnypPWxP6zxBHuluUx5KJ1iFEO1m" if slug == "ma-montre-maroc-demo" else "prj_f4vOAidoEdvhkbw5wy9LagL4nX1K"
-    v_proj_json = {
-        "projectId": v_proj_id,
-        "orgId": "team_mUi2kkxuPAzkdPoA1CqpcfeE",
-        "projectName": slug
-    }
-    with open(os.path.join(vercel_dir, "project.json"), "w", encoding="utf-8") as vf:
-        json.dump(v_proj_json, vf, indent=2)
+    proj_json = os.path.join(vercel_dir, "project.json")
+    if os.path.exists(proj_json):
+        try:
+            os.remove(proj_json)
+        except Exception:
+            pass
+
+    # Ensure project exists in Vercel scope
+    run_cmd(["npx", "--yes", "vercel", "project", "add", slug, "--scope", "team_mUi2kkxuPAzkdPoA1CqpcfeE"], cwd=source_dir)
 
     # Link project
     run_cmd(["npx", "--yes", "vercel", "link", "--yes", "--project", slug, "--scope", "team_mUi2kkxuPAzkdPoA1CqpcfeE"], cwd=source_dir)

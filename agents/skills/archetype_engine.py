@@ -1,6 +1,6 @@
 """
 Skill: E-Commerce Layout Archetype Engine
-Classifies store niches into 6 distinct design archetypes, each with unique
+Classifies store niches into distinct design archetypes, each with unique
 visual identities, typography pairings, wireframes, and checkout interactions.
 """
 
@@ -132,62 +132,91 @@ ARCHETYPES = {
             "accent_secondary": "#059669" # Verified Emerald
         }
     },
-    "luxury_prestige": {
-        "id": "luxury_prestige",
-        "name": "Haute Horlogerie & Joaillerie",
-        "vibe": "Dark titanium obsidian, 18K champagne gold luster, Swiss precision",
-        "hero_style": "luxury_split_hero",
-        "catalog_style": "luxury_cards",
+    "luxury_joaillerie": {
+        "id": "luxury_joaillerie",
+        "name": "Haute Joaillerie & Bijoux Précieux",
+        "vibe": "Élégance royale ivoire, or 18 carats, perles fines, écrins velours",
+        "hero_style": "jewelry_velvet_showcase",
+        "catalog_style": "jewelry_gem_cards",
         "checkout_style": "fast_modal",
-        "trust_badge_style": "luxury_gold_crests",
-        "border_radius": "rounded-xl",
+        "trust_badge_style": "jewelry_crests",
+        "border_radius": "rounded-2xl",
         "card_aspect": "aspect-[4/5]",
         "fonts": {
             "headings": "Playfair Display, Cormorant Garamond, serif",
             "body": "Inter, system-ui, sans-serif",
-            "mono": "ui-monospace, monospace"
+            "mono": "monospace"
+        },
+        "color_tokens": {
+            "background": "#FDFBF7",   # Warm Ivory Cream
+            "surface": "#FFFFFF",      # Pure Diamond White
+            "border": "#EAE3D2",
+            "text_primary": "#0F172A", # Deep Slate Noir
+            "text_secondary": "#64748B",
+            "accent": "#D4AF37",       # 18K Imperial Gold
+            "accent_secondary": "#8C701B" # Royal Bronze
+        }
+    },
+    "luxury_horlogerie": {
+        "id": "luxury_horlogerie",
+        "name": "Haute Horlogerie & Chronomètres de Prestige",
+        "vibe": "Titanium obsidian sombre, acier 904L, lunette Cerachrom, vert impérial",
+        "hero_style": "horlogerie_cockpit_specs",
+        "catalog_style": "watch_chronometer_grid",
+        "checkout_style": "fast_modal",
+        "trust_badge_style": "chronometer_pills",
+        "border_radius": "rounded-xl",
+        "card_aspect": "aspect-[4/5]",
+        "fonts": {
+            "headings": "Plus Jakarta Sans, Montserrat, sans-serif",
+            "body": "Inter, system-ui, sans-serif",
+            "mono": "ui-monospace, SFMono-Regular, monospace"
         },
         "color_tokens": {
             "background": "#07090E",   # Obsidian Titanium
-            "surface": "#0E131F",
+            "surface": "#0E131F",      # Dial Black
             "border": "#1E293B",
-            "text_primary": "#F8FAFC",
+            "text_primary": "#F8FAFC", # Luminescent White
             "text_secondary": "#94A3B8",
-            "accent": "#D4AF37",       # Imperial 18K Gold
-            "accent_secondary": "#059669" # Rolex Imperial Green
+            "accent": "#10B981",       # Rolex Emerald Green
+            "accent_secondary": "#D4AF37" # Champagne Gold
         }
     }
 }
 
 def classify_niche(niche: str, brand_name: str = "", lead_id: str = "") -> str:
-    """Classifies a lead into one of 6 distinct e-commerce design archetypes."""
+    """Classifies a lead into one of distinct e-commerce design archetypes."""
     text = f"{niche} {brand_name} {lead_id}".lower()
     
     # 1. Tech & Gadgets
     if any(k in text for k in ["dashcam", "auto", "high-tech", "gadget", "domotique", "connect", "serrure", "photo", "studio", "caméra", "tech", "matériel", "smart home"]):
         return "tech_gadgets"
         
-    # 2. Luxury Horlogerie & Joaillerie
-    if any(k in text for k in ["montre", "horloger", "joaillerie", "bijou", "or 18k", "argent 925", "solitaire", "diamant", "prestige", "luxe", "clakovs", "anulus", "mamontre", "viba", "aurea"]):
-        return "luxury_prestige"
+    # 2. Jewelry & Haute Joaillerie
+    if any(k in text for k in ["joaillerie", "bijou", "or 18k", "argent 925", "solitaire", "diamant", "anulus", "viba", "aurea", "lamoura"]) and "montre" not in brand_name.lower() and "montre" not in lead_id.lower():
+        return "luxury_joaillerie"
+
+    # 3. Watches & Haute Horlogerie
+    if any(k in text for k in ["montre", "horloger", "clakovs", "mamontre", "miguina"]):
+        return "luxury_horlogerie"
         
-    # 3. Artisanal & Terroir
+    # 4. Artisanal & Terroir
     if any(k in text for k in ["céramique", "artisan", "cuir", "maroquinerie", "fès", "marrakech", "chabi", "terroir", "café", "torréfié", "tableau", "art de vivre", "feskin", "bleather", "darna", "massinart"]):
         return "artisanal_craft"
         
-    # 4. Beauty & Cosmetics
+    # 5. Beauty & Cosmetics
     if any(k in text for k in ["cosmétique", "skincare", "cheveux", "argan", "bio", "beauté", "soin", "parfum", "fragrance", "fenna", "beauty"]):
         return "beauty_cosmetics"
         
-    # 5. Health & Medical
+    # 6. Health & Medical
     if any(k in text for k in ["santé", "médical", "diabète", "capteur", "orthopédique", "médicaux"]):
         return "health_medical"
         
-    # 6. Fashion & Streetwear (Shoes, abayas, clothing, modest fashion)
+    # 7. Fashion & Streetwear (Shoes, abayas, clothing, modest fashion)
     if any(k in text for k in ["streetwear", "fashion", "chaussure", "soulier", "basket", "sneaker", "vêtement", "prêt-à-porter", "lingerie", "pyjama", "abaya", "voile", "modest", "caftan", "sac", "dynasty", "flex", "arwa", "skyeveil"]):
         return "fashion_streetwear"
         
-    # Default fallback based on high-conversion Moroccan e-commerce standard
+    # Default fallback
     return "fashion_streetwear"
 
 def get_archetype_spec(archetype_id: str) -> dict:
