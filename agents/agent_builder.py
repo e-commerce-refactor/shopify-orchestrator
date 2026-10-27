@@ -15,6 +15,17 @@ from agents.skills.archetype_engine import get_archetype_spec
 from agents.skills.motion_profiles import get_motion_profile
 from agents.skills.shopify_catalog import harvest_shopify_catalog
 from agents.skills.design_genome import PAGE_FAMILIES
+from agents.skills.admin_backoffice import (
+    generate_admin_types,
+    generate_admin_auth,
+    generate_admin_layout,
+    generate_admin_login,
+    generate_admin_dashboard,
+    generate_admin_products,
+    generate_admin_reviews,
+    generate_admin_settings,
+    generate_admin_sql_migration,
+)
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -43,6 +54,11 @@ def run_build(lead_id: str, workspace: str, brand_name: str):
     os.makedirs(os.path.join(demo_dir, "lib"), exist_ok=True)
     os.makedirs(os.path.join(demo_dir, "supabase"), exist_ok=True)
     os.makedirs(os.path.join(demo_dir, "public"), exist_ok=True)
+    os.makedirs(os.path.join(demo_dir, "app", "admin"), exist_ok=True)
+    os.makedirs(os.path.join(demo_dir, "app", "admin", "login"), exist_ok=True)
+    os.makedirs(os.path.join(demo_dir, "app", "admin", "products"), exist_ok=True)
+    os.makedirs(os.path.join(demo_dir, "app", "admin", "reviews"), exist_ok=True)
+    os.makedirs(os.path.join(demo_dir, "app", "admin", "settings"), exist_ok=True)
 
     # 1. Load lead, brand, design fingerprint, and layout metadata
     lead_file = os.path.join(workspace, "lead.json")
@@ -1986,6 +2002,7 @@ export default function OrderSuccessModal({ orderInfo, onClose }: OrderSuccessMo
     footer_template = """'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { Phone, Mail, Instagram, ShieldCheck, MapPin } from 'lucide-react';
 
 export default function Footer() {
@@ -2036,9 +2053,14 @@ export default function Footer() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 pt-6 border-t border-brand-border/60 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px]">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 pt-6 border-t border-brand-border/60 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px]">
         <p>© 2026 __BRAND_NAME__. Tous droits réservés.</p>
-        <p className="text-brand-muted/70">Propulsé par Next.js Edge & Supabase Maroc</p>
+        <div className="flex items-center gap-4">
+          <Link href="/admin" className="text-brand-muted hover:text-brand-accent transition-colors flex items-center gap-1 opacity-70 hover:opacity-100">
+            <span>🔒</span> Espace Admin
+          </Link>
+          <p className="text-brand-muted/70">Propulsé par Next.js Edge & Supabase Maroc</p>
+        </div>
       </div>
     </footer>
   );
@@ -2202,60 +2224,65 @@ export const supabase = (supabaseUrl && supabaseAnonKey && !supabaseAnonKey.incl
         f.write(suba_content)
     created_files.append(suba_path)
 
-    # 21. lib/types.ts
-    types_content = """export interface OrderPayload {
-  lead_id: string;
-  product_name: string;
-  product_price: number;
-  shipping_fee: number;
-  total_amount: number;
-  customer_name: string;
-  phone: string;
-  city: string;
-  address: string;
-  status: 'pending' | 'confirmed' | 'delivered';
-}
-"""
+    # 21. lib/types.ts (Comprehensive domain types)
+    types_content = generate_admin_types()
     types_path = os.path.join(demo_dir, "lib", "types.ts")
     with open(types_path, "w", encoding="utf-8") as f:
         f.write(types_content)
     created_files.append(types_path)
 
-    # 22. supabase/migration.sql
-    sql_migration = """-- Fast COD Orders Table Definition
-CREATE TABLE IF NOT EXISTS public.orders (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    lead_id TEXT NOT NULL,
-    product_name TEXT NOT NULL,
-    product_price NUMERIC(10, 2) NOT NULL,
-    shipping_fee NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    total_amount NUMERIC(10, 2) NOT NULL,
-    customer_name TEXT NOT NULL,
-    phone TEXT NOT NULL,
-    city TEXT NOT NULL,
-    address TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+    # 21b. lib/adminAuth.ts (Admin authentication helper)
+    admin_auth_content = generate_admin_auth()
+    admin_auth_path = os.path.join(demo_dir, "lib", "adminAuth.ts")
+    with open(admin_auth_path, "w", encoding="utf-8") as f:
+        f.write(admin_auth_content)
+    created_files.append(admin_auth_path)
 
--- Row Level Security (RLS)
-ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+    # 21c. app/admin/layout.tsx (Protected admin shell)
+    admin_layout_content = generate_admin_layout(brand_name, lead_id)
+    admin_layout_path = os.path.join(demo_dir, "app", "admin", "layout.tsx")
+    with open(admin_layout_path, "w", encoding="utf-8") as f:
+        f.write(admin_layout_content)
+    created_files.append(admin_layout_path)
 
--- Allow anonymous inserts from web storefront
-CREATE POLICY "Allow public order placement"
-ON public.orders
-FOR INSERT
-TO anon
-WITH CHECK (true);
+    # 21d. app/admin/login/page.tsx (Admin login with username or email)
+    admin_login_content = generate_admin_login(brand_name, lead_id)
+    admin_login_path = os.path.join(demo_dir, "app", "admin", "login", "page.tsx")
+    with open(admin_login_path, "w", encoding="utf-8") as f:
+        f.write(admin_login_content)
+    created_files.append(admin_login_path)
 
--- Allow authenticated dashboard reads
-CREATE POLICY "Allow service_role full access"
-ON public.orders
-FOR ALL
-TO authenticated
-USING (true)
-WITH CHECK (true);
-"""
+    # 21e. app/admin/page.tsx (Section Dashboard - live KPIs & COD orders)
+    admin_dash_content = generate_admin_dashboard(brand_name, lead_id)
+    admin_dash_path = os.path.join(demo_dir, "app", "admin", "page.tsx")
+    with open(admin_dash_path, "w", encoding="utf-8") as f:
+        f.write(admin_dash_content)
+    created_files.append(admin_dash_path)
+
+    # 21f. app/admin/products/page.tsx (Section Manage Products)
+    admin_prod_content = generate_admin_products(brand_name, lead_id)
+    admin_prod_path = os.path.join(demo_dir, "app", "admin", "products", "page.tsx")
+    with open(admin_prod_path, "w", encoding="utf-8") as f:
+        f.write(admin_prod_content)
+    created_files.append(admin_prod_path)
+
+    # 21g. app/admin/reviews/page.tsx (Section Manage Reviews)
+    admin_rev_content = generate_admin_reviews(brand_name, lead_id)
+    admin_rev_path = os.path.join(demo_dir, "app", "admin", "reviews", "page.tsx")
+    with open(admin_rev_path, "w", encoding="utf-8") as f:
+        f.write(admin_rev_content)
+    created_files.append(admin_rev_path)
+
+    # 21h. app/admin/settings/page.tsx (Section Settings)
+    admin_set_content = generate_admin_settings(brand_name, lead_id, wa_phone, contact_email)
+    admin_set_path = os.path.join(demo_dir, "app", "admin", "settings", "page.tsx")
+    with open(admin_set_path, "w", encoding="utf-8") as f:
+        f.write(admin_set_content)
+    created_files.append(admin_set_path)
+
+    # 22. supabase/migration.sql (Full schema: orders, products, reviews, settings, admin users)
+    slug = lead_id.lower().replace("_", "-").replace(" ", "-").strip("-")
+    sql_migration = generate_admin_sql_migration(brand_name, lead_id, slug, products_sample=products_list)
     sql_path = os.path.join(demo_dir, "supabase", "migration.sql")
     with open(sql_path, "w", encoding="utf-8") as f:
         f.write(sql_migration)

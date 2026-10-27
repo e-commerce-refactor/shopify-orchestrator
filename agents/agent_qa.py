@@ -83,7 +83,11 @@ def run_qa(lead_id: str, workspace: str, brand_name: str):
         "components/Header.tsx", "components/Hero.tsx",
         "components/ProductCard.tsx", "components/ProductGrid.tsx",
         "components/CodModal.tsx", "components/OrderSuccessModal.tsx",
-        "components/TrustBadges.tsx", "components/Footer.tsx"
+        "components/TrustBadges.tsx", "components/Footer.tsx",
+        "lib/adminAuth.ts",
+        "app/admin/layout.tsx", "app/admin/login/page.tsx",
+        "app/admin/page.tsx", "app/admin/products/page.tsx",
+        "app/admin/reviews/page.tsx", "app/admin/settings/page.tsx"
     ]
 
     missing_files = []

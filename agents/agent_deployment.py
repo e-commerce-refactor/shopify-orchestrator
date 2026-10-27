@@ -17,6 +17,7 @@ import shutil
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from agents.skills.admin_backoffice import generate_admin_sql_migration
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -387,32 +388,7 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
                 errors.append("Supabase anon key was not available")
 
             # 5. Apply SQL Schema Migration
-            sql_migration = """
-            CREATE TABLE IF NOT EXISTS public.orders (
-                id BIGSERIAL PRIMARY KEY,
-                ref TEXT UNIQUE NOT NULL,
-                customer_name TEXT NOT NULL,
-                phone TEXT NOT NULL,
-                city TEXT NOT NULL,
-                address TEXT,
-                items_summary TEXT NOT NULL,
-                total NUMERIC NOT NULL,
-                status TEXT DEFAULT 'en_attente',
-                notes TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            );
-            ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
-            DO $$ BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'orders' AND policyname = 'Allow public insert to orders') THEN
-                    CREATE POLICY "Allow public insert to orders" ON public.orders FOR INSERT TO anon WITH CHECK (true);
-                END IF;
-                IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'orders' AND policyname = 'Allow anon read orders') THEN
-                    DROP POLICY "Allow anon read orders" ON public.orders;
-                END IF;
-            END $$;
-            CREATE INDEX IF NOT EXISTS idx_orders_phone ON public.orders (phone);
-            CREATE INDEX IF NOT EXISTS idx_orders_ref ON public.orders (ref);
-            """
+            sql_migration = generate_admin_sql_migration(brand_name, lead_id, slug)
             try:
                 q_req = urllib.request.Request(
                     f"https://api.supabase.com/v1/projects/{supabase_ref}/database/query",
