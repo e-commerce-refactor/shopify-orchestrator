@@ -326,3 +326,84 @@ Agent 5 (QA) evaluates the proposed storefront against all other generated leads
 $$\text{Similarity} = 0.15 \cdot S_{\text{family}} + 0.15 \cdot S_{\text{hero}} + 0.10 \cdot S_{\text{nav}} + 0.15 \cdot S_{\text{card}} + 0.10 \cdot S_{\text{checkout}} + 0.20 \cdot S_{\text{sections}} + 0.15 \cdot S_{\text{color}}$$
 
 If the similarity score exceeds **65%**, the Anti-Clone gate flags a defect, triggering deterministic variation pertubation until the design is proven distinct.
+
+---
+
+## 12. External AI Coding Agents & MCP Integration
+
+The Orchestrator supports both **top-down subagent delegation** (Pattern A) and **protocol-level interoperability** (Pattern C) with modern AI coding agents such as **Claude Code**, **OpenAI Codex**, **Cursor**, and **Antigravity**.
+
+### 12.1 Pattern A: AI Subagent Bridge (`agents/skills/ai_bridge.py`)
+
+The orchestrator can invoke external AI coding agents as specialized workers for creative or iterative engineering:
+1. **Storefront Polishing (Agent 4 Builder):** Passes the generated Next.js 14 App Router code, design tokens, and layout specs to Claude Code (`claude -p`) or Codex (`codex exec`) to polish animations and fine-tune styling.
+2. **Autonomous QA Auto-Fixer (Agent 5 QA):** When responsive tests or lint rules fail, error traces are dispatched to the AI agent to patch the offending code files in place before re-running verification.
+3. **Hyper-Personalized Sales Outreach (Agent 7 Sales):** AI drafts customized Moroccan Darija and French outreach messages citing exact audited savings and script drain.
+4. **Resilient Local Fallback:** If CLI credentials are unavailable or token limits are reached, the system logs a note and preserves the deterministic code without interrupting the pipeline.
+
+```bash
+# Check status of local AI engines:
+python orchestrator.py ai-status
+
+# Run with AI agent assistance:
+python orchestrator.py "Build demo 70mai_Maroc" --with-ai --engine claude
+python orchestrator.py run-all 1 --with-ai
+```
+
+### 12.2 Pattern C: Model Context Protocol (MCP) Server (`mcp_server.py`)
+
+The entire orchestrator is packaged as a standard Model Context Protocol (2024-11-05) server operating over stdio with zero third-party dependencies. Any MCP-compliant client can discover and execute orchestrator capabilities as native tools.
+
+#### Registered MCP Tools:
+- `shopify_orchestrator_assess`: Ingest store URL and create isolated workspace.
+- `shopify_orchestrator_discover`: Collect public storefront evidence, catalog JSON, and OSINT.
+- `shopify_orchestrator_audit`: Run performance audit, script bloat count, and COD drain calculation.
+- `shopify_orchestrator_solution`: Synthesize design tokens, layout specs, and ADR.
+- `shopify_orchestrator_build`: Generate Next.js 14 demo candidate (with optional AI enhancement).
+- `shopify_orchestrator_qa`: Run automated QA test suite and optional AI auto-fix.
+- `shopify_orchestrator_deploy`: Generate deployment plan or live provision GitHub/Supabase/Vercel.
+- `shopify_orchestrator_sales`: Generate bilingual sales outreach drafts in French and Moroccan Darija.
+- `shopify_orchestrator_run_all`: Execute complete 8-stage lifecycle in one call.
+- `shopify_orchestrator_status`: Inspect stage progress and gate history.
+- `shopify_orchestrator_list_leads`: Query all tracked stores in the workspace.
+- `shopify_orchestrator_ai_status`: Query availability of Claude Code and Codex execution engines.
+
+#### Quick Configuration:
+```bash
+# Register with Claude Code CLI:
+claude mcp add shopify-orchestrator python "c:/Users/UserAdmin/Desktop/work/shopify/mcp_server.py"
+
+# Register with Codex CLI:
+codex mcp add shopify-orchestrator python "c:/Users/UserAdmin/Desktop/work/shopify/mcp_server.py"
+```
+Or reference [mcp_config.json](file:///c:/Users/UserAdmin/Desktop/work/shopify/mcp_config.json) in your Cursor or Claude Desktop settings.
+
+### 12.3 The Dual Agent Model: Claude Code as Master Agent vs Subagent
+
+Understanding who directs whom across the two patterns:
+
+```mermaid
+flowchart TD
+    subgraph Pattern_C ["Pattern C: Claude Code as Master Agent (Interactive MCP)"]
+        U1["User Prompt"] --> CC1["Claude Code (Master Agent / PM)"]
+        CC1 -->|Dispatches Tools| MCP1["MCP Server Tools (mcp_server.py)"]
+        MCP1 -->|Returns Artifacts & Evidence| CC1
+        CC1 -->|Native Edits & Refactoring| WS1["leads/<brand>/demo/source/"]
+    end
+
+    subgraph Pattern_A ["Pattern A: Orchestrator as Master (Automated CLI Bridge)"]
+        U2["Terminal / Cron / CI"] --> PY["Python Orchestrator (State Machine)"]
+        PY -->|Deterministic Pipeline| WS2["leads/<brand>/demo/source/"]
+        PY -->|Spawns Worker Subagent| CC2["Claude Code CLI (claude -p)"]
+        CC2 -->|Code Polishing & QA Autofix| WS2
+    end
+```
+
+| Dimension | Pattern C (MCP Host) | Pattern A (CLI Subagent Bridge) |
+| :--- | :--- | :--- |
+| **Master Director** | **Claude Code** (or Cursor/Antigravity) | **Python Orchestrator Engine** |
+| **Agent Role of Claude Code** | Master autonomous agent (conversational, planning, coding) | Specialized execution worker subagent |
+| **Invocation** | Interactive chat: `claude` | CLI command: `python orchestrator.py run-all 1 --with-ai` |
+| **Code Refinement** | Claude Code directly reads & edits files natively | Subprocess dispatches `claude -p` non-interactively |
+| **Best Used For** | Exploratory research, custom architectural tweaks, interactive reviews | Unattended batch processing, automated CI/CD migrations, cron tasks |
+

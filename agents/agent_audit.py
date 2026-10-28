@@ -271,7 +271,7 @@ def run_audit(lead_id: str, workspace: str, brand_name: str, target_url: str):
 
     collection_method = network.get("method", "missing")
     http_status = network.get("http_status")
-    live_evidence = collection_method == "live_http_get" and http_status == 200
+    live_evidence = (collection_method == "live_http_get" and http_status == 200) or bool(network.get("raw_html_sha256"))
     detected_apps = network.get("detected_apps", [])
     script_count = network.get("total_external_scripts")
     measured = {

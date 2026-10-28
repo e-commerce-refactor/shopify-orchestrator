@@ -33,6 +33,7 @@ from agents.agent_builder import run_build
 from agents.agent_qa import run_qa
 from agents.agent_deployment import run_deployment_prep, run_live_deployment
 from agents.agent_sales import run_sales
+from agents.skills.ai_bridge import bridge
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -594,12 +595,21 @@ def step_solution(lead_id: str):
     )
     return handoff
 
-def step_build(lead_id: str):
+def step_build(lead_id: str, with_ai: bool = False, ai_engine: str = "auto"):
     require_stage_ready(lead_id, "build")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
     handoff = validate_handoff(run_build(lead_id, workspace, lead_data["brand_name"]))
     
+    # Pattern A: AI Subagent Enhancement (Claude Code / Codex)
+    if with_ai or os.environ.get("ORCHESTRATOR_ENABLE_AI", "").lower() in ("true", "1", "yes"):
+        print(f"\n[*] Subagent A (AI Bridge): Invoking AI coding agent ({ai_engine}) to refine components...")
+        ai_res = bridge.enhance_storefront(workspace, lead_data["brand_name"], engine=ai_engine)
+        if ai_res.get("success"):
+            print(f"[✓] AI coding agent ({ai_res.get('engine')}) successfully polished demo code.")
+        else:
+            print(f"[!] AI refinement note: {ai_res.get('error')} (deterministic code safely retained).")
+
     art_versions = {a["path"]: a["sha256"] for a in handoff["artifacts"]}
     update_run(lead_id, {
         "stage": "build",
@@ -625,12 +635,27 @@ def step_build(lead_id: str):
     )
     return handoff
 
-def step_qa(lead_id: str):
+def step_qa(lead_id: str, autofix: bool = False, ai_engine: str = "auto"):
     require_stage_ready(lead_id, "qa")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
     handoff = validate_handoff(run_qa(lead_id, workspace, lead_data["brand_name"]))
     
+    # Pattern A: AI Autonomous QA Fixer
+    if (autofix or os.environ.get("ORCHESTRATOR_AUTOFIX_AI", "").lower() in ("true", "1", "yes")) and handoff["status"] == "failed":
+        print(f"\n[*] Subagent A (AI Bridge): QA found blockers. Invoking AI agent ({ai_engine}) to attempt autonomous code fix...")
+        qa_file = os.path.join(workspace, "demo", "qa_report.json")
+        if os.path.exists(qa_file):
+            try:
+                with open(qa_file, "r", encoding="utf-8") as f:
+                    qdata = json.load(f)
+                fix_res = bridge.qa_autofix(workspace, qdata, engine=ai_engine)
+                if fix_res.get("success"):
+                    print(f"[✓] AI agent ({fix_res.get('engine')}) applied fixes. Re-running QA verification...")
+                    handoff = validate_handoff(run_qa(lead_id, workspace, lead_data["brand_name"]))
+            except Exception as e:
+                print(f"[!] Autofix error: {e}")
+
     art_versions = {a["path"]: a["sha256"] for a in handoff["artifacts"]}
     update_run(lead_id, {
         "stage": "qa",
@@ -693,12 +718,27 @@ def step_deploy_prep(lead_id: str, live: bool = True):
     )
     return handoff
 
-def step_sales(lead_id: str):
+def step_sales(lead_id: str, with_ai: bool = False, ai_engine: str = "auto"):
     require_stage_ready(lead_id, "sales")
     lead_data, run_data = load_lead_run(lead_id)
     workspace = get_lead_workspace(lead_id)
     handoff = validate_handoff(run_sales(lead_id, workspace, lead_data["brand_name"], lead_data["target_url"]))
     
+    # Pattern A: AI Sales Pitch Enhancement
+    if with_ai or os.environ.get("ORCHESTRATOR_ENABLE_AI", "").lower() in ("true", "1", "yes"):
+        print(f"\n[*] Subagent A (AI Bridge): Invoking AI agent ({ai_engine}) to craft personalized bilingual pitch...")
+        ai_res = bridge.craft_sales_outreach(workspace, lead_data["brand_name"], lead_data["target_url"], engine=ai_engine)
+        if ai_res.get("success"):
+            print(f"[✓] AI agent ({ai_res.get('engine')}) drafted personalized pitches.")
+            ai_sales_path = os.path.join(workspace, "sales", "ai_personalized_pitch.md")
+            try:
+                with open(ai_sales_path, "w", encoding="utf-8") as f:
+                    f.write(ai_res.get("output", ""))
+            except Exception:
+                pass
+        else:
+            print(f"[!] AI sales note: {ai_res.get('error')} (verified template copy safely retained).")
+
     art_versions = {a["path"]: a["sha256"] for a in handoff["artifacts"]}
     update_run(lead_id, {
         "stage": "complete" if handoff["status"] == "passed" else "sales",
@@ -729,16 +769,18 @@ def slugify(lead_id: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     slug = slug.strip("-")
-    suffix = os.environ.get("DEPLOY_SLUG_SUFFIX", "-v2")
+    suffix = os.environ.get("DEPLOY_SLUG_SUFFIX", "-v3")
     if not slug.endswith(suffix):
         slug = f"{slug}{suffix}"
     return slug
 
-def run_all(lead_id: str, live: bool = True):
+def run_all(lead_id: str, live: bool = True, with_ai: bool = False, ai_engine: str = "auto"):
     print("\n" + "#"*70)
     print(f"🚀 EXECUTING COMPLETE ORCHESTRATION PIPELINE IN ONE GO")
     print(f"   Target Business: {lead_id}")
     print(f"   Mode: Full Automated Pipeline (GitHub + Supabase + Vercel Live Deploy)")
+    if with_ai:
+        print(f"   AI Subagent Engine: Active ({ai_engine})")
     print("#"*70)
 
     # Agent 0: Intake
@@ -749,10 +791,10 @@ def run_all(lead_id: str, live: bool = True):
         ("discovery", step_discovery),
         ("audit", step_audit),
         ("solution", step_solution),
-        ("build", step_build),
-        ("qa", step_qa),
+        ("build", lambda lid: step_build(lid, with_ai=with_ai, ai_engine=ai_engine)),
+        ("qa", lambda lid: step_qa(lid, autofix=with_ai, ai_engine=ai_engine)),
         ("deploy", lambda lid: step_deploy_prep(lid, live=live)),
-        ("sales", step_sales),
+        ("sales", lambda lid: step_sales(lid, with_ai=with_ai, ai_engine=ai_engine)),
     ]
     for stage_name, runner in stages:
         handoff = runner(lead_id)
@@ -785,29 +827,67 @@ Global Shopify Ecommerce Modernization Agency Orchestrator CLI
 Universal modernization & migration engine for any Shopify business.
 
 Usage:
-  python orchestrator.py run-all <lead ID or number>
+  python orchestrator.py run-all <lead ID or number> [--with-ai] [--engine claude|codex]
   python orchestrator.py Assess <store URL> [Brand Name]
   python orchestrator.py "Discover <lead ID>"
   python orchestrator.py "Audit <lead ID>"
   python orchestrator.py "Plan solution <lead ID>"
-  python orchestrator.py "Build demo <lead ID>"
-  python orchestrator.py "Verify QA <lead ID>"
+  python orchestrator.py "Build demo <lead ID>" [--with-ai] [--engine claude|codex]
+  python orchestrator.py "Verify QA <lead ID>" [--autofix]
   python orchestrator.py "Prepare deployment <lead ID>"
   python orchestrator.py "Deploy <lead ID> --approved"
-  python orchestrator.py "Draft outreach <lead ID>"
+  python orchestrator.py "Draft outreach <lead ID>" [--with-ai]
   python orchestrator.py status <lead ID>
   python orchestrator.py list
+  python orchestrator.py ai-status        (Inspect Claude Code / Codex / LLM availability)
+  python orchestrator.py mcp              (Run stdio Model Context Protocol server)
         """)
         return
 
     cmd = " ".join(sys.argv[1:]).strip()
 
+    # 0. MCP Server
+    if cmd.strip().lower() in ("mcp", "mcp-server", "serve-mcp"):
+        import mcp_server
+        mcp_server.run_server()
+        return
+
+    # 0.1 AI Status
+    if cmd.strip().lower() in ("ai-status", "agents", "ai"):
+        caps = bridge.get_capabilities()
+        print("\n" + "="*60)
+        print("🤖 AI Coding Agents & Execution Engines Status")
+        print("="*60)
+        print(f" • Active Default Engine: {caps['active_engine'].upper()}")
+        print(f" • Available Engines:     {', '.join(caps['available_engines']) or 'None'}")
+        print(f" • Claude Code CLI:       {caps['claude_cli_path'] or 'Not found'}")
+        print(f" • OpenAI Codex CLI:      {caps['codex_cli_path'] or 'Not found'}")
+        print(f" • Anthropic API Key:     {'Configured' if caps['has_anthropic_api'] else 'Not set'}")
+        print(f" • OpenAI API Key:        {'Configured' if caps['has_openai_api'] else 'Not set'}")
+        print("="*60 + "\n")
+        return
+
+    # Extract common AI flags
+    with_ai = "--with-ai" in cmd.lower() or "--ai" in cmd.lower()
+    autofix = "--autofix" in cmd.lower() or with_ai
+    ai_engine = "auto"
+    engine_match = re.search(r"--engine\s+(\S+)", cmd, re.IGNORECASE)
+    if engine_match:
+        ai_engine = engine_match.group(1).lower()
+
+    # Clean flags from target string
+    def strip_flags(text: str) -> str:
+        t = re.sub(r'--(?:with-)?ai\b', '', text, flags=re.IGNORECASE)
+        t = re.sub(r'--autofix\b', '', t, flags=re.IGNORECASE)
+        t = re.sub(r'--engine\s+\S+', '', t, flags=re.IGNORECASE)
+        return t.strip()
+
     # 1. Run all in one go
     run_all_match = re.match(r"^(?:run[-_ ]?all|start.*in\s+one\s+go)\s*(.*)", cmd, re.IGNORECASE)
     if run_all_match:
-        target = run_all_match.group(1).strip()
+        target = strip_flags(run_all_match.group(1).strip())
         lead_id = resolve_lead_id(target or "1")
-        run_all(lead_id)
+        run_all(lead_id, with_ai=with_ai, ai_engine=ai_engine)
         return
 
     # 2. Assess
@@ -854,15 +934,15 @@ Usage:
     # 6. Build Demo
     build_match = re.match(r"^(?:build demo|build)\s+(.*)", cmd, re.IGNORECASE)
     if build_match:
-        lead_id = resolve_lead_id(build_match.group(1))
-        step_build(lead_id)
+        lead_id = resolve_lead_id(strip_flags(build_match.group(1)))
+        step_build(lead_id, with_ai=with_ai, ai_engine=ai_engine)
         return
 
     # 7. QA
     qa_match = re.match(r"^(?:verify qa|qa)\s+(.*)", cmd, re.IGNORECASE)
     if qa_match:
-        lead_id = resolve_lead_id(qa_match.group(1))
-        step_qa(lead_id)
+        lead_id = resolve_lead_id(strip_flags(qa_match.group(1)))
+        step_qa(lead_id, autofix=autofix, ai_engine=ai_engine)
         return
 
     # 8. Prepare deployment / Deploy
@@ -879,8 +959,8 @@ Usage:
     # 9. Draft Outreach
     sales_match = re.match(r"^(?:draft outreach|outreach|sales)\s+(.*)", cmd, re.IGNORECASE)
     if sales_match:
-        lead_id = resolve_lead_id(sales_match.group(1))
-        step_sales(lead_id)
+        lead_id = resolve_lead_id(strip_flags(sales_match.group(1)))
+        step_sales(lead_id, with_ai=with_ai, ai_engine=ai_engine)
         return
 
     # 10. List

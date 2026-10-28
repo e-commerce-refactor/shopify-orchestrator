@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "shopify-orchestrator": {
+      "command": "python",
+      "args": [
+        "c:/Users/UserAdmin/Desktop/work/shopify/mcp_server.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}

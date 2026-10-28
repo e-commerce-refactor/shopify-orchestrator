@@ -52,7 +52,7 @@ def slugify(lead_id: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     slug = slug.strip("-")
-    suffix = os.environ.get("DEPLOY_SLUG_SUFFIX", "-v2")
+    suffix = os.environ.get("DEPLOY_SLUG_SUFFIX", "-v3")
     if not slug.endswith(suffix):
         slug = f"{slug}{suffix}"
     return slug
@@ -260,12 +260,15 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
     else:
         print(f"[+] Remote repository '{github_org}/{slug}' exists.")
 
-    # Prepare local git repository
+    # Prepare local git repository strictly isolated to source_dir
     git_dir = os.path.join(source_dir, ".git")
-    if not os.path.exists(git_dir):
-        print("[*] Initializing local git repository...")
-        record_command("Git initialization", ["git", "init"])
-        record_command("Git main branch", ["git", "branch", "-M", "main"])
+    head_file = os.path.join(git_dir, "HEAD")
+    if not os.path.exists(head_file):
+        print("[*] Initializing local git repository inside source directory...")
+        if os.path.exists(git_dir):
+            shutil.rmtree(git_dir, ignore_errors=True)
+        run_cmd(["git", "init", "-b", "main"], cwd=source_dir)
+        run_cmd(["git", "-C", source_dir, "branch", "-M", "main"])
 
     # Ensure .gitignore
     gitignore_path = os.path.join(source_dir, ".gitignore")
@@ -273,15 +276,16 @@ def run_live_deployment(lead_id: str, workspace: str, brand_name: str, target_ur
         with open(gitignore_path, "w", encoding="utf-8") as f:
             f.write("node_modules\n.next\n.env.local\n.env*.local\n.DS_Store\n")
 
-    # Set remote URL
-    run_cmd(["git", "remote", "remove", "origin"], cwd=source_dir)
-    record_command("Git remote configuration", ["git", "remote", "add", "origin", f"{gh_repo_url}.git"])
+    # Set remote URL on source_dir repo
+    run_cmd(["git", "-C", source_dir, "remote", "remove", "origin"])
+    record_command("Git remote configuration", ["git", "-C", source_dir, "remote", "add", "origin", f"{gh_repo_url}.git"], cwd=source_dir)
     
     # Initial Commit & Push
-    record_command("Git staging", ["git", "add", "."])
-    record_command("Git initial commit", ["git", "commit", "-m", f"feat: initial modern Next.js storefront for {brand_name}"], allow_no_changes=True)
+    record_command("Git staging", ["git", "-C", source_dir, "add", "-A"], cwd=source_dir)
+    record_command("Git initial commit", ["git", "-C", source_dir, "commit", "-m", f"feat: initial modern Next.js storefront for {brand_name}"], cwd=source_dir, allow_no_changes=True)
+    run_cmd(["git", "-C", source_dir, "branch", "-M", "main"])
     print(f"[*] Pushing initial commit to '{gh_repo_url}' on branch 'main'...")
-    p_code, p_out, p_err = run_cmd(["git", "push", "-u", "origin", "main", "--force"], cwd=source_dir)
+    p_code, p_out, p_err = run_cmd(["git", "-C", source_dir, "push", "-u", "origin", "main", "--force"], cwd=source_dir)
     if p_code != 0:
         print(f"[!] Push note: {p_err}")
         errors.append(f"GitHub initial push: {p_err or p_out or f'exit code {p_code}'}")
@@ -435,9 +439,9 @@ export const supabase = supabaseUrl && supabaseAnonKey
     else:
         errors.append("Generated Supabase client lib/supabaseClient.ts is missing")
 
-    record_command("Stage Supabase client", ["git", "add", "lib/supabaseClient.ts"])
-    record_command("Commit Supabase client", ["git", "commit", "-m", "fix(supabase): read connection from environment"], allow_no_changes=True)
-    record_command("Push Supabase client", ["git", "push", "origin", "main"])
+    record_command("Stage Supabase client", ["git", "-C", source_dir, "add", "lib/supabaseClient.ts"], cwd=source_dir)
+    record_command("Commit Supabase client", ["git", "-C", source_dir, "commit", "-m", "fix(supabase): read connection from environment"], cwd=source_dir, allow_no_changes=True)
+    record_command("Push Supabase client", ["git", "-C", source_dir, "push", "origin", "main"], cwd=source_dir)
     if errors:
         return failure_handoff("Supabase client publication")
 
@@ -500,7 +504,7 @@ export const supabase = supabaseUrl && supabaseAnonKey
     
     # Connect to GitHub
     print(f"[*] Connecting Vercel project to '{gh_repo_url}'...")
-    record_command("Vercel Git connection", ["npx", "--yes", "vercel", "git", "connect", f"{gh_repo_url}.git", "--yes"])
+    record_command("Vercel Git connection", ["npx", "--yes", "vercel", "git", "connect", f"{gh_repo_url}.git", "--yes", "--scope", "team_mUi2kkxuPAzkdPoA1CqpcfeE"])
     if errors:
         return failure_handoff("Vercel project setup")
 
@@ -532,7 +536,7 @@ export const supabase = supabaseUrl && supabaseAnonKey
 
     # Deploy to Production
     print("[*] Building and deploying to Vercel production edge...")
-    d_code, d_out, d_err = run_cmd(["npx", "--yes", "vercel", "--prod", "--yes"], cwd=source_dir)
+    d_code, d_out, d_err = run_cmd(["npx", "--yes", "vercel", "--prod", "--yes", "--scope", "team_mUi2kkxuPAzkdPoA1CqpcfeE"], cwd=source_dir)
     if d_code != 0:
         errors.append(f"Vercel production deployment: {d_err or d_out or f'exit code {d_code}'}")
         return failure_handoff("Vercel production deployment")

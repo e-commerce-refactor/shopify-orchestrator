@@ -35,8 +35,8 @@ An enterprise agentic orchestrator designed to assess, audit, prototype, and mig
 ```bash
 # Run complete lifecycle in one go (by business number or ID)
 python orchestrator.py run-all 1
-# or
-python orchestrator.py run-all 70mai_Maroc
+# or with external AI coding agent assistance (Claude Code / Codex):
+python orchestrator.py run-all 1 --with-ai
 
 # Assess a new store (creates leads/<Business_Name>/)
 python orchestrator.py Assess https://flexshoes.ma "Flex Shoes"
@@ -45,16 +45,50 @@ python orchestrator.py Assess https://flexshoes.ma "Flex Shoes"
 python orchestrator.py "Discover 70mai_Maroc"
 python orchestrator.py "Audit 70mai_Maroc"
 python orchestrator.py "Plan solution 70mai_Maroc"
-python orchestrator.py "Build demo 70mai_Maroc"
-python orchestrator.py "Verify QA 70mai_Maroc"
+python orchestrator.py "Build demo 70mai_Maroc" [--with-ai]
+python orchestrator.py "Verify QA 70mai_Maroc" [--autofix]
 python orchestrator.py "Prepare deployment 70mai_Maroc"
 python orchestrator.py "Deploy 70mai_Maroc --approved"
-python orchestrator.py "Draft outreach 70mai_Maroc"
+python orchestrator.py "Draft outreach 70mai_Maroc" [--with-ai]
 
-# View tracked leads and pipeline stage status
+# View tracked leads, pipeline status, and AI engine health
 python orchestrator.py list
 python orchestrator.py status 70mai_Maroc
+python orchestrator.py ai-status
 ```
+
+---
+
+## 🤖 Pattern A: AI Subagent Bridge (Claude Code & OpenAI Codex)
+
+The orchestrator integrates directly with local AI coding agents via [agents/skills/ai_bridge.py](file:///c:/Users/UserAdmin/Desktop/work/shopify/agents/skills/ai_bridge.py):
+- **Storefront Component Polishing:** Uses Claude Code or Codex to refine typography, animations, and micro-interactions in generated Next.js code.
+- **Autonomous QA Auto-Fixer:** Automatically passes test failures and TypeScript/CSS errors to the AI agent to patch code and re-test.
+- **Hyper-Personalized Sales Copy:** Generates custom French and Moroccan Darija pitches citing verified audit data.
+- **Graceful Deterministic Fallback:** Operates with zero required tokens or API keys if run in offline/fast mode.
+
+---
+
+## 🔌 Pattern C: Model Context Protocol (MCP) Server
+
+Expose the orchestrator natively as a standard MCP server ([mcp_server.py](file:///c:/Users/UserAdmin/Desktop/work/shopify/mcp_server.py)) so Claude Code, Cursor, Codex, and Antigravity can drive the entire pipeline via tools:
+
+```bash
+# Add to Claude Code:
+claude mcp add shopify-orchestrator python "c:/Users/UserAdmin/Desktop/work/shopify/mcp_server.py"
+
+# Add to Codex CLI:
+codex mcp add shopify-orchestrator python "c:/Users/UserAdmin/Desktop/work/shopify/mcp_server.py"
+
+# Or run standalone stdio server:
+python orchestrator.py mcp
+```
+
+### 🧠 Who is the Agent? (Pattern A vs Pattern C)
+- **In Pattern C (MCP):** **Claude Code is the Master Agent / Project Manager**. You prompt Claude Code naturally; Claude Code reasons about which modernization tools to invoke, examines the generated Next.js code, and refines it directly in place.
+- **In Pattern A (CLI Bridge):** The **Python Orchestrator is in charge**. It executes deterministic stages and can spawn `claude -p` under the hood for unattended batch runs (`--with-ai`).
+
+Configuration file template available in [mcp_config.json](file:///c:/Users/UserAdmin/Desktop/work/shopify/mcp_config.json).
 
 ---
 

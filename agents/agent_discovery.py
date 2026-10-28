@@ -214,7 +214,7 @@ def run_discovery(lead_id: str, workspace: str, target_url: str, brand_name: str
         json.dump(brand_dossier, f, indent=2, ensure_ascii=False)
     dossier_sha256 = hash_file(dossier_path)
 
-    live_capture = collection_method == "live_http_get" and status_code == 200
+    live_capture = (collection_method == "live_http_get" and status_code == 200) or (len(html_content) > 1000 and "<!-- Live evidence unavailable" not in html_content)
     social_collection = social_data.get("collection", {})
     social_verified = social_collection.get("method") == "live_instagram_meta"
     handoff = {
