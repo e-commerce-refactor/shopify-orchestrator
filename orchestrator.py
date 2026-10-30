@@ -769,7 +769,7 @@ def slugify(lead_id: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     slug = slug.strip("-")
-    suffix = os.environ.get("DEPLOY_SLUG_SUFFIX", "-v3")
+    suffix = os.environ.get("DEPLOY_SLUG_SUFFIX", "-v4")
     if not slug.endswith(suffix):
         slug = f"{slug}{suffix}"
     return slug
