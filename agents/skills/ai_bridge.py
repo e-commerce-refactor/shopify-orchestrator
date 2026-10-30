@@ -1,7 +1,8 @@
 """
 AI Agent Bridge for Global Shopify Modernization Orchestrator.
 Enables the Orchestrator to coordinate external AI coding agents (Claude Code, OpenAI Codex, or direct LLM APIs)
-as dynamic specialist subagents (Pattern A) with graceful fallback to deterministic pipelines.
+as dynamic specialist subagents (Pattern A) with authentication checking, interactive login guidance,
+and rich brand/social DNA context injection.
 """
 
 import os
@@ -23,7 +24,6 @@ def find_executable(name: str) -> Optional[str]:
     if found:
         return found
     if sys.platform == "win32":
-        # Check standard user local bin paths
         candidates = [
             os.path.expandvars(rf"%USERPROFILE%\.local\bin\{name}.exe"),
             os.path.expandvars(rf"%USERPROFILE%\AppData\Local\Programs\OpenAI\Codex\bin\{name}.exe"),
@@ -45,45 +45,191 @@ class AIAgentBridge:
         self.anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         self.openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
 
-    def get_capabilities(self) -> Dict[str, Any]:
-        """Inspect and report available AI agent execution engines."""
-        engines = []
-        if self.claude_path:
-            engines.append("claude")
-        if self.codex_path:
-            engines.append("codex")
-        if self.anthropic_key:
-            engines.append("anthropic_api")
-        if self.openai_key:
-            engines.append("openai_api")
+    def check_engine_auth(self, engine: str) -> Dict[str, Any]:
+        """
+        Check if a specific AI engine is authenticated and ready to execute.
+        If it requires authentication, returns actionable login commands and diagnostic status.
+        """
+        engine = engine.lower()
 
-        preferred = os.environ.get("ORCHESTRATOR_AI_AGENT", "").strip().lower()
-        if preferred and preferred in ["claude", "codex", "anthropic_api", "openai_api", "none"]:
-            active = preferred
-        elif "claude" in engines:
-            active = "claude"
-        elif "codex" in engines:
-            active = "codex"
-        elif engines:
-            active = engines[0]
-        else:
-            active = "none"
+        if engine == "codex":
+            if not self.codex_path:
+                return {
+                    "engine": "codex",
+                    "authenticated": False,
+                    "available": False,
+                    "message": "Codex CLI executable not found on system PATH."
+                }
+            try:
+                proc = subprocess.run(
+                    [self.codex_path, "login", "status"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=8
+                )
+                output = proc.stdout.strip() + " " + proc.stderr.strip()
+                if "Logged in" in output:
+                    return {
+                        "engine": "codex",
+                        "authenticated": True,
+                        "available": True,
+                        "status": output.strip(),
+                        "message": "Codex CLI authenticated and operational."
+                    }
+                else:
+                    return {
+                        "engine": "codex",
+                        "authenticated": False,
+                        "available": True,
+                        "login_command": "codex login",
+                        "message": "Codex CLI is not logged in. Run 'codex login' to authenticate."
+                    }
+            except Exception as exc:
+                return {
+                    "engine": "codex",
+                    "authenticated": False,
+                    "available": True,
+                    "login_command": "codex login",
+                    "message": f"Could not verify Codex login status: {exc}"
+                }
+
+        elif engine == "claude":
+            if not self.claude_path:
+                return {
+                    "engine": "claude",
+                    "authenticated": False,
+                    "available": False,
+                    "message": "Claude Code CLI executable not found on system PATH."
+                }
+            try:
+                # Fast probe with short timeout
+                proc = subprocess.Popen(
+                    [self.claude_path, "-p", "echo ping", "--dangerously-skip-permissions"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                stdout, stderr = proc.communicate(input="", timeout=3)
+                combined = stdout + " " + stderr
+                if "OAuth session expired" in combined or "Failed to authenticate" in combined or proc.returncode != 0:
+                    return {
+                        "engine": "claude",
+                        "authenticated": False,
+                        "available": True,
+                        "login_command": "claude login",
+                        "message": "Claude Code OAuth session expired or not authenticated. Run 'claude login' to authenticate."
+                    }
+                return {
+                    "engine": "claude",
+                    "authenticated": True,
+                    "available": True,
+                    "message": "Claude Code CLI authenticated and operational."
+                }
+            except Exception as exc:
+                return {
+                    "engine": "claude",
+                    "authenticated": False,
+                    "available": True,
+                    "login_command": "claude login",
+                    "message": "Claude Code OAuth session expired or not authenticated. Run 'claude login' to authenticate."
+                }
+
+        elif engine == "anthropic_api":
+            return {
+                "engine": "anthropic_api",
+                "authenticated": bool(self.anthropic_key),
+                "available": bool(self.anthropic_key),
+                "message": "Anthropic API Key configured." if self.anthropic_key else "ANTHROPIC_API_KEY environment variable not set."
+            }
+
+        elif engine == "openai_api":
+            return {
+                "engine": "openai_api",
+                "authenticated": bool(self.openai_key),
+                "available": bool(self.openai_key),
+                "message": "OpenAI API Key configured." if self.openai_key else "OPENAI_API_KEY environment variable not set."
+            }
 
         return {
-            "available_engines": engines,
+            "engine": engine,
+            "authenticated": False,
+            "available": False,
+            "message": f"Unknown engine '{engine}'."
+        }
+
+    def get_capabilities(self) -> Dict[str, Any]:
+        """Inspect and report available AI agent execution engines and active selection."""
+        # Check active selection from environment variable
+        env_choice = (os.environ.get("ACTIVE_AI_AGENT") or os.environ.get("ORCHESTRATOR_AI_AGENT") or "auto").strip().lower()
+
+        engines_info = {}
+        if self.codex_path:
+            engines_info["codex"] = self.check_engine_auth("codex")
+        if self.claude_path:
+            engines_info["claude"] = self.check_engine_auth("claude")
+        if self.anthropic_key:
+            engines_info["anthropic_api"] = self.check_engine_auth("anthropic_api")
+        if self.openai_key:
+            engines_info["openai_api"] = self.check_engine_auth("openai_api")
+
+        available = list(engines_info.keys())
+
+        # Determine active engine
+        if env_choice in engines_info:
+            active = env_choice
+        elif env_choice == "none":
+            active = "none"
+        else:
+            # Auto-selection: pick first authenticated engine
+            active = "none"
+            # Prioritize Codex if authenticated
+            if engines_info.get("codex", {}).get("authenticated"):
+                active = "codex"
+            elif engines_info.get("claude", {}).get("authenticated"):
+                active = "claude"
+            elif engines_info.get("anthropic_api", {}).get("authenticated"):
+                active = "anthropic_api"
+            elif engines_info.get("openai_api", {}).get("authenticated"):
+                active = "openai_api"
+            elif available:
+                active = available[0]
+
+        return {
+            "available_engines": available,
             "active_engine": active,
+            "configured_choice": env_choice,
+            "engines_auth": engines_info,
             "claude_cli_path": self.claude_path,
             "codex_cli_path": self.codex_path,
             "has_anthropic_api": bool(self.anthropic_key),
             "has_openai_api": bool(self.openai_key),
         }
 
+    def ensure_authenticated(self, engine: str) -> Dict[str, Any]:
+        """
+        Verify that the chosen engine is logged in.
+        If not, prompts the user with instructions to log in.
+        """
+        auth_status = self.check_engine_auth(engine)
+        if not auth_status.get("authenticated", False):
+            login_cmd = auth_status.get("login_command", f"{engine} login")
+            msg = auth_status.get("message", f"Engine {engine} requires authentication.")
+            print("\n" + "!" * 70)
+            print(f"[!] AI AGENT AUTHENTICATION REQUIRED FOR '{engine.upper()}'")
+            print(f"    Status: {msg}")
+            print(f"    >> Action required: Open terminal and run: {login_cmd}")
+            print("!" * 70 + "\n")
+        return auth_status
+
     def invoke(
         self,
         prompt: str,
         cwd: Optional[str] = None,
         engine: str = "auto",
-        timeout: int = 90,
+        timeout: int = 120,
         system_prompt: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -101,13 +247,25 @@ class AIAgentBridge:
                 "error": "No AI coding agent (Claude Code, Codex, or API keys) available or AI is disabled."
             }
 
-        # 1. Claude Code CLI Dispatch
-        if selected == "claude" and self.claude_path:
-            return self._invoke_claude_cli(prompt, cwd=cwd, timeout=timeout, system_prompt=system_prompt)
+        # Check authentication before invocation
+        auth = self.ensure_authenticated(selected)
+        if not auth.get("authenticated", False):
+            # If auto and selected failed, attempt to find an alternate authenticated engine
+            if engine == "auto":
+                for alt in caps["available_engines"]:
+                    alt_auth = self.check_engine_auth(alt)
+                    if alt_auth.get("authenticated", False):
+                        print(f"[*] Auto-switching AI engine from '{selected}' to authenticated '{alt}'...")
+                        selected = alt
+                        break
 
-        # 2. OpenAI Codex CLI Dispatch
+        # 1. OpenAI Codex CLI Dispatch
         if selected == "codex" and self.codex_path:
             return self._invoke_codex_cli(prompt, cwd=cwd, timeout=timeout)
+
+        # 2. Claude Code CLI Dispatch
+        if selected == "claude" and self.claude_path:
+            return self._invoke_claude_cli(prompt, cwd=cwd, timeout=timeout, system_prompt=system_prompt)
 
         # 3. Direct Anthropic API Fallback
         if selected in ("anthropic_api", "claude") and self.anthropic_key:
@@ -128,7 +286,7 @@ class AIAgentBridge:
         self,
         prompt: str,
         cwd: Optional[str] = None,
-        timeout: int = 90,
+        timeout: int = 120,
         system_prompt: Optional[str] = None
     ) -> Dict[str, Any]:
         """Execute non-interactive prompt via Claude Code CLI."""
@@ -137,25 +295,23 @@ class AIAgentBridge:
             cmd.extend(["--append-system-prompt", system_prompt])
 
         try:
-            # We redirect stdin to DEVNULL so Claude Code doesn't wait for interactive input
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
                 cwd=cwd,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
-                errors="replace",
-                timeout=timeout
+                errors="replace"
             )
-            output = proc.stdout.strip()
-            stderr = proc.stderr.strip()
+            stdout, stderr = proc.communicate(input="", timeout=timeout)
+            output = stdout.strip()
 
             if proc.returncode == 0:
                 return {"success": True, "engine": "claude", "output": output, "error": None}
             else:
-                err_msg = stderr or output or f"Process exited with code {proc.returncode}"
+                err_msg = stderr.strip() or output or f"Process exited with code {proc.returncode}"
                 return {"success": False, "engine": "claude", "output": output, "error": err_msg}
 
         except subprocess.TimeoutExpired:
@@ -167,29 +323,28 @@ class AIAgentBridge:
         self,
         prompt: str,
         cwd: Optional[str] = None,
-        timeout: int = 90
+        timeout: int = 120
     ) -> Dict[str, Any]:
-        """Execute non-interactive prompt via Codex CLI."""
+        """Execute non-interactive prompt via Codex CLI with clean EOF stdin closure."""
         cmd = [self.codex_path, "exec", "--dangerously-bypass-approvals-and-sandbox", prompt]
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
                 cwd=cwd,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
-                errors="replace",
-                timeout=timeout
+                errors="replace"
             )
-            output = proc.stdout.strip()
-            stderr = proc.stderr.strip()
+            stdout, stderr = proc.communicate(input="", timeout=timeout)
+            output = stdout.strip()
 
             if proc.returncode == 0:
                 return {"success": True, "engine": "codex", "output": output, "error": None}
             else:
-                err_msg = stderr or output or f"Codex exited with code {proc.returncode}"
+                err_msg = stderr.strip() or output or f"Codex exited with code {proc.returncode}"
                 return {"success": False, "engine": "codex", "output": output, "error": err_msg}
 
         except subprocess.TimeoutExpired:
@@ -201,14 +356,14 @@ class AIAgentBridge:
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-        timeout: int = 60
+        timeout: int = 90
     ) -> Dict[str, Any]:
-        """Direct Anthropic REST API call using pure standard library (no pip dependencies required)."""
+        """Direct Anthropic Messages API dispatch."""
         url = "https://api.anthropic.com/v1/messages"
         headers = {
             "x-api-key": self.anthropic_key,
             "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
+            "Content-Type": "application/json"
         }
         body: Dict[str, Any] = {
             "model": "claude-3-5-sonnet-20241022",
@@ -231,9 +386,9 @@ class AIAgentBridge:
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-        timeout: int = 60
+        timeout: int = 90
     ) -> Dict[str, Any]:
-        """Direct OpenAI REST API call using pure standard library (no pip dependencies required)."""
+        """Direct OpenAI Chat Completions API dispatch."""
         url = "https://api.openai.com/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.openai_key}",
@@ -262,12 +417,34 @@ class AIAgentBridge:
     # High-level domain workflows
     def enhance_storefront(self, workspace: str, brand_name: str, engine: str = "auto") -> Dict[str, Any]:
         """
-        Ask Claude Code / Codex to inspect and refine generated Next.js 14 demo components.
+        Ask AI coding agent (Claude Code / Codex / LLM) to inspect and refine generated Next.js 14 demo components
+        using full Brand Dossier, Social DNA, and Archetype Layout rules.
         """
         source_dir = os.path.join(workspace, "demo", "source")
         if not os.path.exists(source_dir):
             return {"success": False, "error": f"Demo source directory not found at {source_dir}"}
 
+        # 1. Load brand dossier
+        dossier_file = os.path.join(workspace, "discovery", "brand_dossier.json")
+        brand_dossier = {}
+        if os.path.exists(dossier_file):
+            try:
+                with open(dossier_file, "r", encoding="utf-8") as f:
+                    brand_dossier = json.load(f)
+            except Exception:
+                pass
+
+        # 2. Load social DNA
+        dna_file = os.path.join(workspace, "discovery", "social_dna.json")
+        social_dna = {}
+        if os.path.exists(dna_file):
+            try:
+                with open(dna_file, "r", encoding="utf-8") as f:
+                    social_dna = json.load(f)
+            except Exception:
+                pass
+
+        # 3. Load layout spec & tokens
         solution_file = os.path.join(workspace, "solution", "layout_spec.json")
         layout_spec = {}
         if os.path.exists(solution_file):
@@ -277,14 +454,56 @@ class AIAgentBridge:
             except Exception:
                 pass
 
-        archetype = layout_spec.get("archetype_name", "High-Converting COD E-Commerce")
+        # 4. Load products catalog summary
+        products_summary = "Niche-tailored inventory"
+        pdata_path = os.path.join(source_dir, "data", "products.ts")
+        if os.path.exists(pdata_path):
+            try:
+                with open(pdata_path, "r", encoding="utf-8") as pf:
+                    pcontent = pf.read()
+                    if "PRODUCTS: Product[] =" in pcontent:
+                        json_str = pcontent.split("PRODUCTS: Product[] =")[1].strip().rstrip(";")
+                        prods = json.loads(json_str)
+                        products_summary = json.dumps([{
+                            "name": p.get("name"),
+                            "priceMad": p.get("priceMad"),
+                            "category": p.get("category"),
+                            "specs": p.get("specs", {})
+                        } for p in prods[:4]], indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+
+        archetype_name = layout_spec.get("archetype_name") or brand_dossier.get("archetype_name", "E-Commerce Luxe")
+        positioning = brand_dossier.get("positioning", "Excellence E-Commerce Maroc")
+        vibe = social_dna.get("brand_vibe", "Modern Luxury")
+        moodboard = json.dumps(social_dna.get("aesthetic_moodboard", {}), ensure_ascii=False)
+        lexicon = json.dumps(social_dna.get("customer_lexicon", {}), ensure_ascii=False)
+        hooks = json.dumps(social_dna.get("proven_ad_hooks", []), ensure_ascii=False)
+
         prompt = (
-            f"You are a Senior Frontend Engineer modernizing '{brand_name}' from Shopify to Next.js 14 App Router and Tailwind CSS.\n"
-            f"Archetype: {archetype}.\n"
-            f"Review the generated React components in 'src/components/' and 'src/app/page.tsx'.\n"
-            f"1. Refine the typography, Moroccan MAD pricing formatting, and responsive padding.\n"
-            f"2. Ensure the COD checkout modal has seamless animations and GSM validation.\n"
-            f"3. Make any code polishing edits directly in place."
+            f"You are a Principal Frontend Architect modernizing '{brand_name}' from Shopify to Next.js 14 App Router and Tailwind CSS.\n\n"
+            f"=== 💎 BRAND IDENTITY & SOCIAL DNA ===\n"
+            f"- Brand Vibe: {vibe}\n"
+            f"- Positioning: {positioning}\n"
+            f"- Slogan: {brand_dossier.get('slogan', '')}\n"
+            f"- Aesthetic Moodboard: {moodboard}\n"
+            f"- Customer Lexicon (French & Darija): {lexicon}\n"
+            f"- Proven Ad Hooks: {hooks}\n\n"
+            f"=== 📐 ARCHETYPE & UX BLUEPRINT ===\n"
+            f"- Archetype: {archetype_name} ({layout_spec.get('page_family', 'luxury_editorial')})\n"
+            f"- Density: {layout_spec.get('density', 'spacious_cinematic')}\n"
+            f"- Hero Variant: {layout_spec.get('layout_components', {}).get('hero_variant', 'Hero')}\n"
+            f"- Catalog Variant: {layout_spec.get('layout_components', {}).get('catalog_variant', 'ProductGrid')}\n"
+            f"- Card Anatomy: {layout_spec.get('layout_components', {}).get('product_card_anatomy', 'editorial_framed_card')}\n\n"
+            f"=== 📦 INVENTORY & REAL SPECS ===\n"
+            f"{products_summary}\n\n"
+            f"=== 🛠️ MANDATE (EDIT IN PLACE) ===\n"
+            f"Review the generated Next.js 14 React components located in 'components/' and 'app/page.tsx':\n"
+            f"1. Hero Section ('components/Hero.tsx'): Align the typography, headline, and atmospheric lighting to match the Brand Vibe ({vibe}).\n"
+            f"2. Product Cards ('components/ProductCard.tsx'): Ensure cards display real specs and Moroccan MAD currency formatting ({brand_dossier.get('currency', 'MAD')}). Never display generic dashcam tags.\n"
+            f"3. Social Proof & Stories ('components/InstagramStories.tsx' & 'components/SocialUgcGrid.tsx'): Populate authentic customer voices in French and Darija from the Customer Lexicon.\n"
+            f"4. Fast COD Modal ('components/CodModal.tsx'): Verify smooth Moroccan phone validation (+212) and clear Cash On Delivery reassurance.\n"
+            f"Apply any code refinements directly to the existing files."
         )
 
         res = self.invoke(prompt, cwd=source_dir, engine=engine, timeout=120)

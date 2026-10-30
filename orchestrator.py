@@ -867,10 +867,11 @@ Usage:
         print("="*60 + "\n")
         return
 
-    # Extract common AI flags
-    with_ai = "--with-ai" in cmd.lower() or "--ai" in cmd.lower()
+    # Extract common AI flags & check ACTIVE_AI_AGENT configuration
+    active_env_agent = os.environ.get("ACTIVE_AI_AGENT", "").strip().lower()
+    with_ai = "--with-ai" in cmd.lower() or "--ai" in cmd.lower() or (bool(active_env_agent) and active_env_agent != "none")
     autofix = "--autofix" in cmd.lower() or with_ai
-    ai_engine = "auto"
+    ai_engine = active_env_agent if (active_env_agent and active_env_agent != "none") else "auto"
     engine_match = re.search(r"--engine\s+(\S+)", cmd, re.IGNORECASE)
     if engine_match:
         ai_engine = engine_match.group(1).lower()

@@ -142,6 +142,11 @@ def run_discovery(lead_id: str, workspace: str, target_url: str, brand_name: str
         json.dump(social_data, sf, indent=2, ensure_ascii=False)
     social_sha256 = hash_file(social_path)
 
+    # Save dedicated Social DNA Dossier
+    social_dna_path = os.path.join(discovery_dir, "social_dna.json")
+    with open(social_dna_path, "w", encoding="utf-8") as sdf:
+        json.dump(social_data.get("social_dna", {}), sdf, indent=2, ensure_ascii=False)
+
     # 6. Harvest Products Catalog (Shopify headless or curated)
     catalog_data = harvest_shopify_catalog(
         target_url=target_url,

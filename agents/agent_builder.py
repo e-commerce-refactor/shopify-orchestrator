@@ -106,6 +106,17 @@ def run_build(lead_id: str, workspace: str, brand_name: str):
         except Exception:
             pass
 
+    dna_file = os.path.join(workspace, "discovery", "social_dna.json")
+    social_dna = {}
+    if os.path.exists(dna_file):
+        try:
+            with open(dna_file, "r", encoding="utf-8") as df:
+                social_dna = json.load(df)
+        except Exception:
+            pass
+    if not social_dna and social_data.get("social_dna"):
+        social_dna = social_data["social_dna"]
+
     dossier_file = os.path.join(workspace, "discovery", "brand_dossier.json")
     brand_dossier = {}
     if os.path.exists(dossier_file):
@@ -367,18 +378,8 @@ __ANIMATIONS__
             products_list = dossier_cat["products"]
 
     if not products_list:
-        products_list = [{
-            "id": "item-1",
-            "name": f"{brand_name} Édition Signature",
-            "subtitle": f"Collection Officielle {brand_name}",
-            "category": "Collection Signature",
-            "priceMad": 950,
-            "originalPriceMad": 1200,
-            "image": "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80",
-            "badge": "BESTSELLER",
-            "description": f"Création officielle distribuée par {brand_name} au Maroc. Conforme aux standards de qualité et livrée avec paiement à la réception.",
-            "stockLeft": 3
-        }]
+        from agents.skills.shopify_catalog import get_archetype_catalog
+        products_list = get_archetype_catalog(archetype_id, brand_name)
 
     products_ts = f"""export interface Product {{
   id: string;
@@ -637,7 +638,7 @@ export default function Header() {
     # =========================================================================
     # 9. components/InstagramStories.tsx
     # =========================================================================
-    stories_list = social_data.get("story_highlights", [
+    stories_list = social_dna.get("active_story_highlights") or social_data.get("story_highlights", [
         {"title": "Avis Clients", "icon": "⭐️", "badge": "4.9/5"},
         {"title": "Unboxing", "icon": "📦", "badge": "Réel"},
         {"title": "Coulisses", "icon": "✨", "badge": "Maroc"},
@@ -1231,10 +1232,18 @@ export default function ProductCard({ product, onSelect }: ProductCardProps) {
         <p className="text-xs text-brand-muted line-clamp-2">{product.description}</p>
 
         {/* Specs pill strip */}
-        <div className="p-2 rounded bg-brand-bg border border-brand-border text-[10px] text-brand-muted flex justify-between">
-          <span>RÉSOLUTION: 4K HDR</span>
-          <span>GARANTIE: 2 ANS</span>
-        </div>
+        {product.specs && Object.keys(product.specs).length > 0 ? (
+          <div className="p-2 rounded bg-brand-bg border border-brand-border text-[10px] text-brand-muted flex justify-between flex-wrap gap-1">
+            {Object.entries(product.specs).slice(0, 2).map(([k, v]) => (
+              <span key={k} className="uppercase font-medium">{k}: {v}</span>
+            ))}
+          </div>
+        ) : (
+          <div className="p-2 rounded bg-brand-bg border border-brand-border text-[10px] text-brand-muted flex justify-between">
+            <span>CERTIFIÉ AUTHENTIQUE</span>
+            <span>GARANTIE INCLUSE</span>
+          </div>
+        )}
       </div>
 
       <div className="pt-2 border-t border-brand-border flex items-center justify-between">
@@ -1441,7 +1450,19 @@ export default function ProductGrid({ onSelectProduct }: ProductGridProps) {
     # =========================================================================
     # 14. components/SocialUgcGrid.tsx
     # =========================================================================
-    ugc_list = social_data.get("ugc_media", [
+    ugc_list = []
+    if social_dna.get("customer_lexicon"):
+        fr_q = social_dna["customer_lexicon"].get("french", [])
+        ar_q = social_dna["customer_lexicon"].get("darija", [])
+        authors = ["@sarah_casa", "@youssef_k", "@mehdi_b", "@amina_m"]
+        combined = []
+        for i in range(max(len(fr_q), len(ar_q))):
+            if i < len(fr_q): combined.append(fr_q[i])
+            if i < len(ar_q): combined.append(ar_q[i])
+        for idx, q in enumerate(combined[:4]):
+            ugc_list.append({"author": authors[idx % len(authors)], "caption": q})
+    if not ugc_list:
+        ugc_list = social_data.get("ugc_media", [
         {"author": "@sarah_casa", "caption": "Reçu en 24h, qualité incroyable !"},
         {"author": "@mehdi_b", "caption": "Emballage soigné et produit conforme."},
         {"author": "@youssef_k", "caption": "Le paiement à la livraison rassure beaucoup."},
